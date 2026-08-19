@@ -1,0 +1,6 @@
+setup.py
+evilpkg/__init__.py
+evilpkg.egg-info/PKG-INFO
+evilpkg.egg-info/SOURCES.txt
+evilpkg.egg-info/dependency_links.txt
+evilpkg.egg-info/top_level.txt
