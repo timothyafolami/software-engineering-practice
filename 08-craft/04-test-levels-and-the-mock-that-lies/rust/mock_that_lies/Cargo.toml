@@ -1,0 +1,9 @@
+[package]
+name = "mock_that_lies"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies on purpose. `mockall` would generate `MockRows` from
+# `trait Rows`; src/main.rs hand-writes exactly what the macro emits, so the
+# generated code is readable and the demonstration needs no network.
+[dependencies]
