@@ -1,0 +1,22 @@
+# cargo-mutants configuration.
+#
+# NOT VERIFIED ON THIS MACHINE: cargo-mutants is not installed here, so these
+# keys have never been parsed by the tool. They are written from its documented
+# interface; check them against `cargo mutants --help` and the tool's own
+# README once you have installed it, and correct this file rather than working
+# around it.
+#
+# What IS verified here: `cargo test` runs the weak suite (see run.sh).
+
+# The weak suite, and the hand-applied mutant inside it, live in tests/. Test
+# code must never be mutated -- mutating a test changes the measuring
+# instrument. cargo-mutants already skips `#[cfg(test)]` items; this makes the
+# intent explicit for the integration-test crate as well.
+exclude_globs = ["tests/**"]
+
+# `page_inclusive`-shaped mutants make `walk_pages` loop until `max_pages`, so
+# some mutants are legitimately slower than the baseline rather than broken.
+# Too tight a timeout records those as `timeout` instead of `caught`, and a
+# timeout is not a kill.
+timeout_multiplier = 5.0
+minimum_test_timeout = 20.0
