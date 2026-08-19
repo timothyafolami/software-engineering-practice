@@ -1,0 +1,8 @@
+{
+  "name": "evil-package",
+  "version": "1.0.0",
+  "description": "Benign stand-in for a supply-chain attack: its postinstall runs BEFORE you import a single line. A real one would harvest env tokens and POST them; this one writes a timestamped marker so you can prove WHEN it ran.",
+  "scripts": {
+    "postinstall": "node postinstall.js"
+  }
+}
