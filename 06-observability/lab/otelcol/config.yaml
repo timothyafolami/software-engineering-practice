@@ -1,0 +1,182 @@
+# Layer 6 lab - the collector. This is the part you must read.
+#
+# Running `otelcol` in front of `lgtm` is the whole point: the lgtm container
+# already exposes OTLP on 4317/4318 and would happily take telemetry directly.
+# You put a collector you configured yourself in between so that the pipeline
+# is something you wrote rather than something you inherited -- and so that
+# Topic 5's spanmetrics question ("where does this sit relative to the
+# sampler?") has an answer you can point at.
+#
+# VERIFICATION STATUS: loaded by otel/opentelemetry-collector-contrib:0.140.0
+# on 2026-08-19 and run under load. `validate --config=...` passes, every
+# component named below resolved, and both traces pipelines, the metrics
+# pipeline and the logs pipeline carry data. One thing had to be fixed on that
+# first load: the internal-telemetry `readers:` block below.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # First in every pipeline. Under memory pressure the limiter refuses data
+  # rather than letting the collector OOM -- which matters because the thing
+  # that kills your collector is usually the same incident you are trying to
+  # observe (Topic 4).
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+  # Topic 4's safety net, and the only intervention available mid-incident:
+  # when thirty services are emitting a bad label you cannot redeploy thirty
+  # services, but you can edit one config.
+  #
+  # Commented out deliberately -- Topic 4 asks you to watch the failure first,
+  # then turn this on and prove the capability survived. Uncomment it and add
+  # it to the metrics pipeline when you get there.
+  #
+  # transform/drop_customer_id:
+  #   metric_statements:
+  #     - context: datapoint
+  #       statements:
+  #         - delete_key(attributes, "customer_id")
+
+  # Topic 3's fourth break, and the one that is NOT an environment variable:
+  # a collector config is static YAML with no conditionals, so setting
+  # BREAK=collector_strip on this container does nothing. You make this break
+  # by uncommenting the processor below, adding it to BOTH traces pipelines,
+  # and recreating the container.
+  #
+  # Note what it does and does not do. Trace linkage lives in each span's
+  # trace_id/parent_span_id, not in an attribute, so deleting a `traceparent`
+  # attribute would break nothing -- the spans would still stitch together.
+  # The collector-side break that is real is the collector DROPPING spans:
+  # `pricing`'s subtree never reaches Tempo, so every trace is complete,
+  # internally consistent, and missing the service that owns the latency.
+  # That is a different shape from all three in-process breaks, and the only
+  # place it is visible is the collector's own metrics on :8888. The counter to
+  # read is `otelcol_processor_filter_spans_filtered_total{filter=
+  # "filter/drop_pricing"}` -- NOT `otelcol_processor_dropped_spans`, which
+  # this collector does not emit. Expect it to advance by two per dropped span,
+  # because the processor is in both traces pipelines.
+  #
+  # filter/drop_pricing:
+  #   error_mode: ignore
+  #   traces:
+  #     span:
+  #       - 'resource.attributes["service.name"] == "pricing"'
+
+  # Topic 2 and Topic 5. Tail sampling can see a span's DURATION, which head
+  # sampling cannot: the head decision happens before the duration exists. That
+  # single difference is why a head-sampled service can be missing the very
+  # trace that proves when an incident began (Topic 7's T0).
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 500
+    policies:
+      - name: keep-slow
+        type: latency
+        latency:
+          threshold_ms: 500
+      - name: keep-errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: baseline-sample
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+connectors:
+  # RED from the trace stream. Note where this sits in the pipelines below:
+  # BEFORE tail_sampling, so spanmetrics counts every span rather than the
+  # sampled ones. Move it after the sampler and its rates disagree with the
+  # SDK's `http.server.request.duration` by roughly the sampling factor --
+  # which is Topic 5's step 5, and the reason that step says "predict the
+  # factor first; the answer is more interesting than the obvious one."
+  spanmetrics:
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 300ms, 500ms, 1s, 2s, 5s, 10s]
+    dimensions:
+      - name: http.request.method
+      - name: http.route
+      - name: http.response.status_code
+    # Do NOT add customer_id here. Adding a dimension to spanmetrics multiplies
+    # series exactly like adding a label anywhere else, and it does it for
+    # every service at once.
+    metrics_flush_interval: 15s
+
+exporters:
+  otlphttp/lgtm:
+    endpoint: http://lgtm:4318
+    tls:
+      insecure: true
+
+  # Uncomment while debugging the pipeline itself. `detailed` prints every
+  # span, which is unusable under load and invaluable for ten seconds.
+  # debug:
+  #   verbosity: normal
+
+service:
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      # The collector's own metrics, on :8888. Read `otelcol_processor_dropped_spans`
+      # and `otelcol_exporter_send_failed_spans` before believing anything about
+      # a gap in your data -- a collector silently dropping is a pipeline
+      # problem that looks exactly like a service problem.
+      level: detailed
+      # The `readers:` block is not optional any more, and its absence is
+      # silent. The collector's internal telemetry moved to this OTel-Go
+      # configuration schema, and the built-in default now binds the Prometheus
+      # reader to LOCALHOST:8888 -- which inside a container means nothing
+      # outside that container can reach it. `curl localhost:8888/metrics` on
+      # the host returns a connection error, and so does `curl
+      # http://otelcol:8888/metrics` from a sibling container. Everything about
+      # that failure looks like "the collector is not exposing metrics"; the
+      # truth is that it is exposing them to itself. Naming host 0.0.0.0 here
+      # is what publishing the port on :8888 actually requires.
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+
+  pipelines:
+    # Pipeline 1 feeds spanmetrics ONLY, and it sees every span. It does not
+    # export to lgtm -- if it did, Tempo would receive each trace twice, once
+    # unsampled here and once sampled below.
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [spanmetrics]
+
+    # Pipeline 2 is the sampled trace stream that actually reaches Tempo. The
+    # split is what lets spanmetrics see 100% while Tempo stores 10% plus
+    # everything slow or failed.
+    traces/sampled:
+      receivers: [otlp]
+      processors: [memory_limiter, tail_sampling, batch]
+      exporters: [otlphttp/lgtm]
+
+    metrics:
+      receivers: [otlp, spanmetrics]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/lgtm]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/lgtm]
