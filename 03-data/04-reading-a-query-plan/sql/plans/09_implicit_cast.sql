@@ -1,0 +1,16 @@
+-- 9. An implicit cast applied to the COLUMN, not to the parameter.
+--
+-- orders.id is bigint. Compare it to a numeric and Postgres has no
+-- bigint = numeric operator, so it coerces the cheaper side up -- the column --
+-- and the predicate becomes `(id)::numeric = 4242.0`. A function on the column
+-- again, exactly like query 8, arriving through the type system instead of
+-- through a call you wrote.
+--
+-- WHERE THIS COMES FROM IN REAL CODE: a JSON body parsed into a float, or a
+-- pydantic model with a `Decimal` field, bound straight into a query against a
+-- bigint key. plan_drill.py demonstrates the driver-level version and reports
+-- one genuinely useful negative result: psycopg3 binding a plain Python `str`
+-- does NOT reproduce this, because it sends the value as `unknown` and the
+-- server resolves it to bigint. A `Decimal` or a `float` does.
+-- @explain
+SELECT count(*) FROM orders WHERE id = 424242.0;
