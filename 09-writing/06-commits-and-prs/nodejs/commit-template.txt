@@ -1,0 +1,23 @@
+# <type>(<scope>): <what the change does>
+#   type is for the release tooling: feat | fix | chore | refactor | docs | perf
+#   Everything below is for the human, and no tool will ever ask you for it.
+#
+# Why now:
+#   The trigger. Incident, report, measurement.
+#
+# Rejected first:
+#   What you tried and abandoned, and why.
+#
+# Constraint:
+#   The invariant the code depends on and the type system cannot state.
+#   In this ecosystem, also: which callers may reuse this, and which may not.
+#
+# Verified:
+#   What you ran, what you observed.
+#
+# Refs: #<issue>
+# BREAKING CHANGE: <only if it is one; this line drives the major bump>
+#
+# Install (from inside the repo you are committing to -- the path must be ABSOLUTE,
+#          because git resolves commit.template relative to the cwd at commit time):
+#   git config commit.template $(cd /path/to/this/lab && pwd)/09-writing/06-commits-and-prs/nodejs/commit-template.txt
