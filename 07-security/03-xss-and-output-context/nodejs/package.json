@@ -1,0 +1,10 @@
+{
+  "name": "xss-react-context",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Topic 3 — React/JSX escaping by output context. Needs react + react-dom, which are not in this machine's offline cache. One-time online install: `npm install`, then `node xss_context.js`.",
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
