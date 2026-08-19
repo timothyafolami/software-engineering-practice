@@ -1,0 +1,9 @@
+# k6 writes its CSV and summary JSON here; plotters write PNGs beside them.
+# None of it is source, and none of it is worth a diff.
+*.csv
+*.csv.gz
+*_summary.json
+*.png
+# ... except the synthetic fixtures, which ARE source: they are what makes the
+# plotters runnable on a machine with no Docker and no k6.
+!fixtures/
