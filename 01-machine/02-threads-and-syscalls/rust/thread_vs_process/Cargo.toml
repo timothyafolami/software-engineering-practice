@@ -1,0 +1,11 @@
+[package]
+name = "thread_vs_process"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "thread_vs_process"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
