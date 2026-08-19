@@ -1,0 +1,11 @@
+{
+  "name": "t4-mock-that-lies",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Layer 8 topic 4, Node arm: jest.mock's module-registry substitution reaches consumers you never named. No dependencies -- node:test and node:assert only.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {}
+}
