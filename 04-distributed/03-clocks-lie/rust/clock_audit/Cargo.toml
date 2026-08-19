@@ -1,0 +1,13 @@
+[package]
+name = "clock_audit"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies. Everything this topic needs is in std, and that is itself the
+# finding: Instant and SystemTime are different types with different APIs, so the
+# distinction this whole topic is about is enforced by the compiler rather than by
+# your memory.
+[dependencies]
+
+[profile.release]
+debug = false
