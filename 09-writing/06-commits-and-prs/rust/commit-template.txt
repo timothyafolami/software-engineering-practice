@@ -1,0 +1,25 @@
+# <crate or module>: <what the change does>
+#
+# Why now:
+#   The trigger, with the measurement and its source.
+#
+# Rejected first:
+#   The approach you abandoned, and why.
+#
+# Constraint:
+#   The invariant the compiler is NOT checking. unsafe blocks, unwrap(), and
+#   #[allow(...)] all belong here: say what you know that the compiler does not,
+#   and what would make it false.
+#
+# Verified:
+#   What you ran, what you observed. Benchmarks: name machine and rustc version,
+#   and say whether it was built with optimisations -- see the lab root README on
+#   the Layer 1 defect where -O2 deleted the experiment.
+#
+# Refs: <RFC / decision doc>, <issue>
+#   Link the durable argument. Then write its conclusion here anyway: the link
+#   outlives nothing, and the wiki it points at will be migrated.
+#
+# Install (from inside the repo you are committing to -- the path must be ABSOLUTE,
+#          because git resolves commit.template relative to the cwd at commit time):
+#   git config commit.template $(cd /path/to/this/lab && pwd)/09-writing/06-commits-and-prs/rust/commit-template.txt
