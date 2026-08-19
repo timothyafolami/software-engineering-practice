@@ -1,0 +1,18 @@
+[package]
+name = "crypto_ratelimit"
+version = "0.1.0"
+edition = "2021"
+
+# Part B (the constant-time timing signal) and Part C (rate limiting) use std
+# only. Part A (hash cost) needs a hashing crate; sha2 + argon2 are fetched
+# with `cargo fetch` (one-time, online). The README's Rust emphasis is Part B:
+# the `subtle` crate's ConstantTimeEq returns a `Choice`, not a `bool`, so you
+# cannot branch on the result and reintroduce the timing difference; here we
+# hand-roll the constant-time compare and use std::hint::black_box, the same
+# hazard subtle's design and the benchmark's black_box both address.
+[dependencies]
+sha2 = "0.10"
+argon2 = "0.5"
+
+[profile.release]
+opt-level = 3
