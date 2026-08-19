@@ -1,0 +1,36 @@
+# Layer 9 Topic 5 -- jargon list, with the conversion.
+# Format:  regex :: what to say instead
+# ' :: ' is the separator because a regex may itself contain '|'.
+# Lines starting with # are ignored. Add your own domain's terms; the list is
+# only useful if it contains the words YOU reach for.
+#
+# The test for this list is not "is this word technical" -- it is "does my
+# reader own this unit". Anything they do not own goes through conversion.
+p9[59] :: the slowest 1 in 100 (or 1 in 20) checkouts
+\blatency\b :: how long a customer waits
+\bthroughput\b :: how many orders we can handle per minute
+event.?loop :: the part of the server that handles all customers at once
+\basync\b :: (delete; describe the behaviour, not the technique)
+\bawait\b :: (delete)
+\bthread\b :: (delete; "everything else on that server" is usually what you mean)
+connection pool :: the limited number of database connections we can use at once
+\bGIL\b :: (delete)
+\bgoroutine\b :: (delete)
+\bmutex\b :: (delete)
+\bcache\b :: keeping a copy so we do not ask twice
+\brefactor\b :: change how the code is arranged without changing what it does
+\bmigration\b :: a change to how data is stored
+\bendpoint\b :: the checkout step / the page customers use
+\bAPI\b :: the connection between our systems
+\bqueue(s|ing)?\b :: work waiting in line
+\btimeout\b :: a deadline after which we stop waiting
+\bcircuit breaker\b :: stopping calls to a system we know is broken
+\bSLO\b :: the promise we make about how fast it should be
+\bTPS\b :: orders per second
+\bbackpressure\b :: slowing intake when we cannot keep up
+\bidempotent\b :: safe to do twice without charging twice
+\bsharding\b :: splitting the data across machines
+\bkubernetes\b :: (delete)
+\bdocker\b :: (delete)
+\bORM\b :: (delete)
+\bN\+1\b :: asking the database many small questions instead of one
