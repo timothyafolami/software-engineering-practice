@@ -1,0 +1,242 @@
+# Layer 5 - the shared harness. Service names, ports and environment
+# variables here are the contract described in README.md; topic code depends
+# on them. Change them there or not at all.
+#
+# Run every command in this file's directory:
+#
+#   cd 05-failure/lab
+#   docker compose up -d --build
+#   docker compose run --rm k6 run /scripts/01_ramp.js --out csv=/out/ramp.csv
+#
+# PROFILES. `app`, `postgres` and `k6` carry no profile, which in Compose
+# means they are the default set - exactly the row README.md gives topic 1.
+# Compose profiles are additive, so `--profile chain` starts the chain ON TOP
+# of that default set rather than instead of it; the extra idle containers
+# cost nothing and keep `docker compose up` (no flags) honest for topic 1.
+#
+# Nothing here publishes a host port that a locally installed Postgres or
+# Redis would want. Several topics also ship standalone programs that talk to
+# your LOCAL Postgres on 5432, and both must be able to run at once.
+
+x-app-env: &app-env
+  # Every one of these is also writable at runtime through POST /admin/config,
+  # so a sweep never needs a rebuild. Defaults match README.md's table.
+  ROLE: app
+  SERVICE_MS: "40"
+  POOL_SIZE: "5"
+  MAX_OVERFLOW: "10"
+  POOL_TIMEOUT_S: "30"
+  CLIENT_TIMEOUT_MS: "500"
+  DEADLINE_HEADER: X-Request-Deadline
+  DEADLINE_SLACK_MS: "20"
+  PROPAGATE_DEADLINE: "0"
+  RETRY_ATTEMPTS: "3"
+  RETRY_BASE_MS: "50"
+  RETRY_JITTER: none
+  RETRY_BUDGET_PCT: "0"
+  SHED_MODE: none
+  SHED_WAIT_MS: "50"
+  CACHE_TTL_S: "300"
+  IDEMPOTENCY_MODE: correct
+  UVICORN_BACKLOG: "2048"
+  # STATEMENT_TIMEOUT_MS and UVICORN_LIMIT_CONCURRENCY are deliberately unset.
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGUSER: app
+  PGPASSWORD: app
+  PGDATABASE: failure_lab
+  REDIS_URL: redis://redis:6379/0
+
+x-app-build: &app-build
+  build:
+    context: ./app
+    dockerfile: Dockerfile
+  volumes:
+    # tools/ is mounted rather than copied so `docker compose exec gateway
+    # python -m tools.zombie_report` runs the file you are editing.
+    - ./tools:/srv/tools:ro
+  restart: unless-stopped
+
+services:
+
+  # --------------------------------------------------------------- default
+  # Topic 1 (the latency knee) and the baseline every other topic compares to.
+
+  app:
+    <<: *app-build
+    environment:
+      <<: *app-env
+      ROLE: app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: failure_lab
+    # max_connections is named explicitly because it is the ceiling standing
+    # behind every pool in this lab, and topic 1 asks you to find it.
+    command:
+      - postgres
+      - -c
+      - max_connections=100
+      - -c
+      - log_min_duration_statement=5000
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d failure_lab"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  k6:
+    image: grafana/k6:2.2.0
+    entrypoint: ["k6"]
+    # `up` would otherwise leave k6 sitting with no arguments. `version` exits
+    # immediately and harmlessly; the real invocation is always
+    # `docker compose run --rm k6 run /scripts/...`, which overrides this.
+    command: ["version"]
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./out:/out
+    environment:
+      BASE_URL: http://app:8000
+      GATEWAY_URL: http://gateway:8000
+      SERVICE_B_URL: http://service-b:8000
+      SERVICE_C_URL: http://service-c:8000
+      TOXIPROXY_URL: http://toxiproxy:8474
+      K6_WEB_DASHBOARD: "false"
+    depends_on:
+      - app
+
+  # ----------------------------------------------------------------- chain
+  # Topics 2 (deadline propagation) and 3 (retry amplification).
+
+  gateway:
+    <<: *app-build
+    profiles: [chain, fanout]
+    environment:
+      <<: *app-env
+      ROLE: gateway
+      DOWNSTREAM_URL: http://service-b:8000/chain
+      BACKEND_HOST: backend
+      BACKEND_PORT: "8000"
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  service-b:
+    <<: *app-build
+    profiles: [chain]
+    environment:
+      <<: *app-env
+      ROLE: service_b
+      DOWNSTREAM_URL: http://service-c:8000/chain
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  service-c:
+    <<: *app-build
+    profiles: [chain]
+    environment:
+      <<: *app-env
+      ROLE: service_c
+      # No DOWNSTREAM_URL: C is the leaf, so it does the database work. It
+      # reaches Postgres THROUGH toxiproxy, which is what lets topic 3 make
+      # the leaf's dependency fail without touching application code.
+      DOWNSTREAM_URL: ""
+      PGHOST: toxiproxy
+      PGPORT: "5433"
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      toxiproxy:
+        condition: service_started
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    profiles: [chain, metastable, payments]
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    volumes:
+      - ./toxiproxy:/config:ro
+    ports:
+      - "8474:8474"     # admin API
+      - "55433:5433"    # postgres listener
+      - "56380:6380"    # redis listener
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # ------------------------------------------------------------ metastable
+  # Topic 4. The cache is the capacity multiplier whose loss is the trigger.
+
+  redis:
+    image: redis:7
+    profiles: [metastable]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "56379:6379"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- fanout
+  # Topic 6. Scale this to K: `docker compose --profile fanout up -d --scale
+  # backend=10`. Docker's DNS gives `backend` one A record per replica and
+  # the gateway fans out across every address it resolves.
+  backend:
+    <<: *app-build
+    profiles: [fanout]
+    environment:
+      <<: *app-env
+      ROLE: backend
+      LATENCY_DIST: lognormal
+      LATENCY_P50_MS: "10"
+      LATENCY_TAIL_RATIO: "20"
+      BIMODAL_SLOW_PCT: "1"
+    # No published port and no container_name: both prevent scaling.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # -------------------------------------------------------- observability
+  # Optional, and off by default: k6's CSV plus ../lab/tools/ produce the same
+  # charts with less running. Bring them up with `--profile observability`
+  # when you want to watch a shape live rather than after the fact.
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: [observability]
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: [observability]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
