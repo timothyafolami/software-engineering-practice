@@ -1,0 +1,102 @@
+# The harness for every experiment in Topic 7.
+#
+# The four knobs you will be changing between runs are all on `api`, and
+# all four are commented with the cgroup file they actually write. Changing
+# them requires `docker compose up -d --force-recreate api` -- a plain
+# restart reuses the old cgroup and you will measure the previous config
+# while believing you changed it. That mistake is the single most common
+# way this whole topic produces meaningless numbers.
+#
+# Two things Compose cannot express -- the CFS period length and
+# cpu.max.burst -- are written directly by ../02-throttled-at-30-percent-cpu/
+# docker/write_cgroup.sh. Kubernetes cannot express burst either.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+      args:
+        # 7.7 swaps this for python:3.14t-slim (free-threaded).
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.13-slim}
+    environment:
+      WORKERS: ${WORKERS:-1}
+      DATABASE_URL: postgresql://lab:lab@db:5432/container_lab
+      DB_SLEEP_S: ${DB_SLEEP_S:-0.020}
+      POOL_MAX: ${POOL_MAX:-10}
+      # Node's equivalent knob is UV_THREADPOOL_SIZE; Python's is this,
+      # and it is read at process start, not per request.
+      ANYIO_THREAD_TOKENS: ${ANYIO_THREAD_TOKENS:-40}
+      # Empty means "calibrate at startup". Set it to pin /cpu's cost so
+      # that a sweep which recreates the container between cells compares
+      # one workload against itself instead of five different ones.
+      CPU_ROUNDS: ${CPU_ROUNDS:-}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # ---- the three CPU knobs. Enable ONE at a time for experiment 7.1. ----
+    cpus: "${API_CPUS:-1.0}"        # -> cpu.max "100000 100000"   ALWAYS bites
+    # cpu_shares: 512               # -> cpu.weight 512/1024*100   bites only under contention
+    # cpuset: "0"                   # -> cpuset.cpus "0"           narrows, never freezes
+
+    # ---- the memory knob (7.6). memory.high has no Compose key at all. ----
+    mem_limit: ${API_MEM:-1g}       # -> memory.max
+
+    # cgroup v2 files are readable from inside the container by default on
+    # Docker Desktop; on some hosts the container's own cgroup is not
+    # mounted. If `cat /sys/fs/cgroup/cpu.max` fails, add:
+    #   cgroup_parent and a bind mount of /sys/fs/cgroup:ro
+
+  db:
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: lab
+      POSTGRES_DB: container_lab
+    volumes:
+      - ./app/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab -d container_lab"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    # Give the DB its own quota so it can never be the thing you are
+    # accidentally measuring. If /db p99 is flat across every API config,
+    # raise this and re-run before believing anything.
+    cpus: "2.0"
+    command: >
+      postgres -c max_connections=100 -c shared_buffers=256MB
+
+  # A second container whose only job is to make the host busy, for the
+  # "contended" column of experiment 7.1. It has a deliberately tiny weight
+  # so it loses every proportional fight -- and still costs you nothing when
+  # the api container is quota-limited, which is the whole point.
+  hog:
+    image: alpine:3
+    profiles: ["contend"]
+    command: >
+      sh -c 'for i in $$(seq 1 $${HOG_THREADS:-8}); do
+               (while :; do :; done) & done; wait'
+    environment:
+      HOG_THREADS: ${HOG_THREADS:-8}
+    cpu_shares: 2
+
+  k6:
+    image: grafana/k6:2.2.0
+    profiles: ["load"]
+    volumes:
+      - ./load:/scripts:ro
+    environment:
+      TARGET: ${TARGET:-http://api:8000}
+      RATE: ${RATE:-40}
+      DURATION: ${DURATION:-45s}
+      ENDPOINT: ${ENDPOINT:-/mixed}
+    depends_on:
+      - api
+    # k6 gets its own generous quota. A throttled load generator reports
+    # the load generator's latency, which is how you "prove" a healthy
+    # service is broken.
+    cpus: "2.0"
