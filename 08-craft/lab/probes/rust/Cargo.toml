@@ -1,0 +1,16 @@
+# Topic 1's Rust probe: the same feature, two shapes, one printed number.
+#
+# Rust is the one language in this lab where "interface surface" is a DIFFABLE
+# ARTIFACT rather than a judgement call: `cargo public-api` prints the exact
+# public API as a list, and a CI job can fail a PR for WIDENING it without
+# anyone reading the diff.
+#
+#   cargo test                        # both shapes pass the same tests
+#   cargo public-api -p shallow       # count the lines
+#   cargo public-api -p deep          # count the lines
+#
+# cargo-public-api is not installed on this machine. Unblock with:
+#   cargo install cargo-public-api --locked
+[workspace]
+members = ["shallow", "deep", "same-behaviour"]
+resolver = "2"
