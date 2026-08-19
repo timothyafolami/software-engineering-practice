@@ -1,0 +1,20 @@
+# Layer 5 lab - Grafana's datasource, provisioned so nothing has to be
+# clicked. Dashboards are deliberately not provisioned: the point of the
+# `observability` profile is to look at a SHAPE, and the shape you need
+# depends on which topic you are running. Start from the four queries below.
+#
+#   histogram_quantile(0.99, sum by (le, role) (rate(lab_request_seconds_bucket[10s])))
+#   histogram_quantile(0.99, sum by (le, role) (rate(lab_pool_wait_seconds_bucket[10s])))
+#   lab_inflight
+#   sum by (role, event) (rate(lab_events_total[10s]))
+#
+# The first two are histogram quantiles computed at query time. Never
+# average a pre-computed percentile: Layer 6 is largely about why.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
