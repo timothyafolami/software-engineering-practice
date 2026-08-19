@@ -1,0 +1,296 @@
+# Layer 4 shared lab stack. Service names, ports and env vars come from
+# ../lab/README.md — that file is the spec and the seven topic READMEs
+# reference these names, so renaming anything here breaks their run blocks.
+#
+# Bring up only what a topic needs:
+#   docker compose -p l4-t5 up -d etcd1 etcd2 etcd3
+# Naming a service explicitly enables its profile, so nothing else starts.
+
+name: l4-dist
+
+x-etcd-common: &etcd-common
+  image: quay.io/coreos/etcd:v3.5.21
+  profiles: ["etcd"]
+  environment: &etcd-env
+    ETCD_INITIAL_CLUSTER: "etcd1=http://etcd1:2380,etcd2=http://etcd2:2380,etcd3=http://etcd3:2380"
+    ETCD_INITIAL_CLUSTER_STATE: new
+    ETCD_INITIAL_CLUSTER_TOKEN: l4-dist
+    ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+    ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+    # 100ms heartbeat / 1000ms election timeout: well inside the topic-5
+    # handout's "new leader within 5 seconds" bar, and heartbeat is an order of
+    # magnitude below the election timeout (the README's own broken-run check).
+    ETCD_HEARTBEAT_INTERVAL: "100"
+    ETCD_ELECTION_TIMEOUT: "1000"
+    ETCD_LOG_LEVEL: info
+  networks: [lab]
+
+services:
+  etcd1:
+    <<: *etcd-common
+    container_name: l4-etcd1
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd1
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd1:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd1:2380
+    ports: ["2379:2379"]
+
+  etcd2:
+    <<: *etcd-common
+    container_name: l4-etcd2
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd2
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd2:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd2:2380
+
+  etcd3:
+    <<: *etcd-common
+    container_name: l4-etcd3
+    environment:
+      <<: *etcd-env
+      ETCD_NAME: etcd3
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd3:2379
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd3:2380
+
+  # ---- Topic 4: a real streaming standby -------------------------------
+  pg-primary:
+    image: postgres:18
+    profiles: ["t4"]
+    container_name: l4-pg-primary
+    environment:
+      POSTGRES_PASSWORD: lab
+      POSTGRES_DB: lab
+      POSTGRES_HOST_AUTH_METHOD: trust
+    command: >
+      postgres -c wal_level=replica -c max_wal_senders=10
+               -c wal_keep_size=256MB -c hot_standby=on
+    volumes:
+      - ./pg/primary-init.sh:/docker-entrypoint-initdb.d/10-replication-hba.sh:ro
+    ports: ["55432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lab"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [lab]
+
+  pg-standby:
+    image: postgres:18
+    profiles: ["t4"]
+    container_name: l4-pg-standby
+    user: postgres
+    environment:
+      APPLY_DELAY: ${APPLY_DELAY:-0}
+    entrypoint: ["/bin/bash", "/standby-entrypoint.sh"]
+    volumes:
+      - ./pg/standby-entrypoint.sh:/standby-entrypoint.sh:ro
+      - standby-data:/var/lib/postgresql
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    ports: ["55433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lab"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+    networks: [lab]
+
+  api:
+    build: ./services
+    image: l4-lab-svc
+    profiles: ["t4"]
+    container_name: l4-api
+    command: ["uvicorn", "app.api4:app", "--host", "0.0.0.0", "--port", "8000",
+              "--workers", "1"]
+    environment:
+      PRIMARY_DSN: postgresql://postgres@pg-primary:5432/lab
+      STANDBY_DSN: postgresql://postgres@pg-standby:5432/lab
+      FIX: ${FIX:-none}
+      APPLY_DELAY: ${APPLY_DELAY:-0}
+      RUN_ID: ${RUN_ID:-run}
+      STICKY_MS: ${STICKY_MS:-1000}
+      LSN_TIMEOUT_MS: ${LSN_TIMEOUT_MS:-2000}
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+      pg-standby:
+        condition: service_healthy
+    ports: ["8000:8000"]
+    networks: [lab]
+
+  k6:
+    image: grafana/k6:latest
+    profiles: ["t1", "t2", "t3", "t4", "t6", "k6"]
+    container_name: l4-k6
+    environment:
+      GAP_MS: ${GAP_MS:-0}
+      VUS: ${VUS:-10}
+      ITERS: ${ITERS:-300}
+      # NO DEFAULT ON PURPOSE. This is shared by six topics that each target a
+      # different service. A default here (it was http://api:8000, topic 4's
+      # service) silently redirects every other topic's script to a host that
+      # does not resolve -- and k6 exits 0 while reporting 100% failed requests,
+      # so the run looks like it happened and the deliverable returns zero rows.
+      # Each script carries its own default; the guard in setup() catches the
+      # rest.
+      BASE: ${BASE:-}
+    volumes:
+      - ./k6:/scripts:ro
+    networks: [lab]
+
+  # ---- Topics 1, 2, 6, 7: the shared postgres + toxiproxy ---------------
+  postgres:
+    image: postgres:18
+    profiles: ["t1", "t2", "t6", "t7"]
+    container_name: l4-postgres
+    environment:
+      POSTGRES_PASSWORD: lab
+      POSTGRES_DB: lab
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports: ["55434:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lab"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [lab]
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:latest
+    profiles: ["t1", "t2"]
+    container_name: l4-toxiproxy
+    command: ["-host=0.0.0.0"]
+    ports: ["8474:8474", "8666:8666"]
+    networks: [lab]
+
+  ledger:
+    build: ./services
+    image: l4-lab-svc
+    profiles: ["t1"]
+    container_name: l4-ledger
+    command: ["uvicorn", "app.ledger:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      LAB_DSN: postgresql://postgres@postgres:5432/lab
+      CRASH_AFTER_COMMIT: ${CRASH_AFTER_COMMIT:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped        # CRASH_AFTER_COMMIT=1 exits the process
+    networks: [lab]
+
+  payments-api:
+    build: ./services
+    image: l4-lab-svc
+    profiles: ["t1", "t2", "t6"]
+    container_name: l4-payments-api
+    command: ["uvicorn", "app.${PAYMENTS_APP:-payments1}:app", "--host", "0.0.0.0",
+              "--port", "8000"]
+    environment:
+      LAB_DSN: postgresql://postgres@postgres:5432/lab
+      LEDGER_URL: http://toxiproxy:8666
+      CLIENT_TIMEOUT: ${CLIENT_TIMEOUT:-2.0}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-3}
+      RETRY_POLICY: ${RETRY_POLICY:-any}
+      IMPL: ${IMPL:-B}
+      RUN_ID: ${RUN_ID:-compose}
+      HOLD_MS: ${HOLD_MS:-0}
+      MODE: ${MODE:-v1}
+      BROKER: ${BROKER:-redpanda:9092}
+      TOPIC: ${TOPIC:-payment.succeeded}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports: ["8000:8000"]
+    networks: [lab]
+
+  # ---- Topic 6: a broker that can be stopped ---------------------------
+  redpanda:
+    image: redpandadata/redpanda:v24.3.1
+    profiles: ["t6"]
+    container_name: l4-redpanda
+    # --smp 1 --memory 700M is not a detail: the Docker VM here has 4 CPUs and
+    # 5.1 GB total, and Redpanda's default seastar allocator will try to take
+    # most of it and then fail to start.
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=700M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    networks: [lab]
+
+  relay:
+    build: ./services
+    image: l4-lab-svc
+    profiles: ["t6"]
+    container_name: l4-relay
+    command: ["python", "-m", "app.relay6"]
+    environment:
+      LAB_DSN: postgresql://postgres@postgres:5432/lab
+      BROKER: redpanda:9092
+      # Per-run topic. Sharing one topic across runs is not a naming nit: a new
+      # consumer group with auto.offset.reset=earliest re-reads the WHOLE topic,
+      # so run N's consumer records every message runs 1..N-1 ever published and
+      # the delivered counts exceed the number of charges that exist.
+      TOPIC: ${TOPIC:-payment.succeeded}
+      RUN_ID: ${RUN_ID:-compose}
+      RELAY_NAME: ${RELAY_NAME:-relay}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [lab]
+
+  # ---- Topic 7: the elected singleton, in two containers ---------------
+  relay-a:
+    build: ./services
+    image: l4-lab-svc
+    profiles: ["t7"]
+    container_name: l4-relay-a
+    hostname: relay-a
+    command: ["python", "-m", "app.relay7"]
+    environment: &relay7env
+      LAB_DSN: postgresql://postgres@postgres:5432/lab
+      RUN_ID: ${RUN_ID:-compose}
+      FENCING: ${FENCING:-0}
+      LEASE_TTL: ${LEASE_TTL:-10}
+      RENEW_INTERVAL: ${RENEW_INTERVAL:-1}
+      WORKER: relay-a
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [lab]
+
+  relay-b:
+    build: ./services
+    image: l4-lab-svc
+    profiles: ["t7"]
+    container_name: l4-relay-b
+    hostname: relay-b
+    command: ["python", "-m", "app.relay7"]
+    environment:
+      <<: *relay7env
+      WORKER: relay-b
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [lab]
+
+volumes:
+  standby-data:
+
+networks:
+  lab:
+    name: l4-lab
