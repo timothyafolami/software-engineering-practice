@@ -1,0 +1,23 @@
+# <scope>: <what the change does, imperative, not what file it touches>
+#
+# Why now:
+#   The trigger. Incident, report, measurement, deadline. Dates the decision,
+#   which is what lets someone later notice the trigger no longer applies.
+#
+# Rejected first:
+#   The approach you tried and abandoned, and why. Highest value-per-word
+#   sentence in software archaeology. Aim for this in 3 of every 10 commits.
+#
+# Constraint:
+#   The non-obvious reason the code is shaped this way. In Python nothing else
+#   can hold this: no type, no lint, no compiler. "Must stay idempotent, the
+#   caller retries." "Ordering matters, the index is on (customer_id, created_at)."
+#
+# Verified:
+#   What you ran and what you observed. If it was only smoke-tested, say that.
+#
+# Refs: gh-NNNNN / <ticket>          <- trailers are greppable and survive rebases
+#
+# Install (from inside the repo you are committing to -- the path must be ABSOLUTE,
+#          because git resolves commit.template relative to the cwd at commit time):
+#   git config commit.template $(cd /path/to/this/lab && pwd)/09-writing/06-commits-and-prs/python/commit-template.txt
