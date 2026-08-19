@@ -1,0 +1,31 @@
+# Scrapes the gateway (in compose) and the model server (on the host).
+# The host target is the whole reason `extra_hosts` exists in the compose
+# file: without it this job is permanently down and every panel in topic 2
+# is empty for a reason that looks like the model is broken.
+global:
+  scrape_interval: 2s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8000"]
+
+  - job_name: model_server
+    # mlx_lm.server and vLLM both expose /metrics; if yours does not, this
+    # job stays down and you scrape the gateway's view instead.
+    #
+    # This port is hardcoded and Prometheus does no env substitution, so
+    # MODEL_URL on the gateway does NOT reach here. If your model server is
+    # on another port, edit this line as well or the job scrapes whatever
+    # else happens to be listening on 8081 -- which shows up as a target
+    # that is "down" for an unrelated reason (403, 404) rather than absent.
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
+
+  # Topics 2 and 6 bring up gateway/prom/grafana without `api`, so this job
+  # is legitimately down in those runs. Down here means "not in this stack",
+  # not "broken".
+  - job_name: api
+    static_configs:
+      - targets: ["api:8000"]
