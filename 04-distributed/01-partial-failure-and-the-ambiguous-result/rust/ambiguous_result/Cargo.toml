@@ -1,0 +1,9 @@
+[package]
+name = "ambiguous_result"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies on purpose. The point of the Rust entry in this topic is that
+# the connect / write / read phases are separate calls you make yourself, so
+# there is no client library deciding for you which failures are retryable.
+[dependencies]
