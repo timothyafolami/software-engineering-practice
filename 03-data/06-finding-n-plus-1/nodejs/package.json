@@ -1,0 +1,12 @@
+{
+  "name": "sep-layer3-nplus1",
+  "private": true,
+  "description": "Topic 6: N+1 without an ORM, and the DataLoader batching window",
+  "main": "dataloader_batching.js",
+  "scripts": {
+    "start": "node dataloader_batching.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
