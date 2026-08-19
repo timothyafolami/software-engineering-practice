@@ -1,0 +1,14 @@
+[
+  {
+    "name": "upstream",
+    "listen": "0.0.0.0:8475",
+    "upstream": "upstream:9000",
+    "enabled": true
+  },
+  {
+    "name": "db",
+    "listen": "0.0.0.0:8476",
+    "upstream": "db:5432",
+    "enabled": true
+  }
+]
