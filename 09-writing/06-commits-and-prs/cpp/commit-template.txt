@@ -1,0 +1,24 @@
+# [<component>] <what the change does>
+#
+# Why now:
+#   The trigger, with the measurement and its source.
+#
+# Rejected first:
+#   The approach you abandoned, and why.
+#
+# Constraint:
+#   The invariant the compiler will not check, stated so a stranger can break it
+#   knowingly rather than accidentally. Ownership and lifetime. Who may free
+#   this. Whether this may allocate, block, or throw. Why this memory order is
+#   sufficient. What the cast assumes about layout.
+#
+# Verified:
+#   What you ran and what you observed, WITH THE BUILD FLAGS. -O2 and -O0 are
+#   different experiments; the optimiser has deleted an experiment in this lab
+#   before (see the root README).
+#
+# Bug: <issue>
+#
+# Install (from inside the repo you are committing to -- the path must be ABSOLUTE,
+#          because git resolves commit.template relative to the cwd at commit time):
+#   git config commit.template $(cd /path/to/this/lab && pwd)/09-writing/06-commits-and-prs/cpp/commit-template.txt
