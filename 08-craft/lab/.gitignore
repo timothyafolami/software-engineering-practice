@@ -1,0 +1,13 @@
+# Build and test artifacts. Everything here regenerates from a committed source.
+__pycache__/
+.pytest_cache/
+.hypothesis/
+.coverage
+.mutmut-cache
+mutants/
+node_modules/
+.stryker-tmp/
+reports/
+probes/rust/target/
+probes/go-rapid/testdata/
+consumer-go/consumer
