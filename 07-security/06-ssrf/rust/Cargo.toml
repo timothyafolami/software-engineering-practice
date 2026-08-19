@@ -1,0 +1,10 @@
+[package]
+name = "ssrf"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies: the validation and IP classification use std::net only, so
+# this builds and runs fully offline. (In a real fetcher you would pair this
+# with reqwest::redirect::Policy::none() and a custom Resolve implementation --
+# Rust's guarantees are about memory and data races, not network policy.)
+[dependencies]
