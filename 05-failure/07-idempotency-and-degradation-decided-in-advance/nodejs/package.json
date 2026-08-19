@@ -1,0 +1,16 @@
+{
+  "name": "sep-layer5-topic7",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Layer 5 Topic 7 -- idempotency and degradation decided in advance, Node.js side",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node idempotency.js"
+  },
+  "dependencies": {
+    "pg": "^8.16.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
