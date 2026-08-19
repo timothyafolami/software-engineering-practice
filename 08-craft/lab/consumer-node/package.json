@@ -1,0 +1,13 @@
+{
+  "name": "craft-lab-consumer-node",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Topic 6: a Node consumer of the committed OpenAPI snapshot. The break arrives at typecheck or test time -- and a TypeScript client can be structurally satisfied by a response that is semantically wrong, because types erase at runtime.",
+  "scripts": {
+    "test": "node --test",
+    "start": "node server.js",
+    "typecheck": "tsc --noEmit types.d.ts client.js"
+  },
+  "engines": { "node": ">=24" }
+}
