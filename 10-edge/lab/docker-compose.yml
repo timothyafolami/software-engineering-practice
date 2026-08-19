@@ -1,0 +1,109 @@
+# Layer 10 - the shared lab stack. Service names, ports and script paths
+# here are the ones lab/README.md declares; every topic README refers to
+# them literally, so renaming anything in this file breaks four topics.
+#
+# The split that is not negotiable: Docker Desktop on macOS has no Metal
+# passthrough, so the model server runs on the HOST and containers reach it
+# at host.docker.internal. Nothing in this file starts a model.
+#
+#   docker compose up -d prom grafana gateway     # topics 2, 6
+#   docker compose up -d db api                   # topics 3, 5
+#   docker compose run --rm k6 run /scripts/arrival_rate.js -e RATE=4
+
+name: layer10-lab
+
+services:
+  # FastAPI in front of the host model server. Owns cancellation-on-disconnect
+  # and prompt layout. Topics 2 and 6.
+  gateway:
+    build: ./gateway
+    ports:
+      - "8000:8000"
+    environment:
+      MODEL_URL: ${MODEL_URL:-http://host.docker.internal:8081/v1}
+      PROMPT_VOLATILE: ${PROMPT_VOLATILE:-tail}   # head | tail
+      SHADOW_TARGET: ${SHADOW_TARGET:-}           # unset disables shadowing
+      MODEL_NAME: ${MODEL_NAME:-local}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Single source of truth for prompt layout: topic 2's module, mounted
+      # rather than copied, so the gateway and the regression test cannot
+      # drift apart.
+      - ../02-continuous-batching-and-paged-kv/python:/opt/prompt_layout:ro
+
+  # FastAPI + SQLAlchemy async over Postgres. Owns the connection pool.
+  # Topics 3 and 5. Never talks to the model server.
+  api:
+    build: ./api
+    ports:
+      - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:app@db:5432/app
+      POOL_PROFILE: ${POOL_PROFILE:-default}      # default | sized | budgeted
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      # Postgres 18+ images want the volume at /var/lib/postgresql, not
+      # .../data: the entrypoint refuses to start if it finds a mount at
+      # the old path. See docker-library/postgres#1259.
+      - pgdata:/var/lib/postgresql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Open-model load generator. Never `constant-vus` -- see lab/README.md.
+  k6:
+    image: grafana/k6:2.2.0
+    profiles: ["load"]
+    volumes:
+      - ./scripts:/scripts:ro
+      # handleSummary writes here. `run --rm` deletes the container, so a
+      # summary written to the container filesystem is gone before you can
+      # read it; the topic READMEs tell you to keep the N=1 summary, which
+      # requires this mount to exist.
+      - ./out:/out
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      GATEWAY_URL: ${GATEWAY_URL:-http://gateway:8000}
+      API_URL: ${API_URL:-http://api:8000}
+
+  prom:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prom
+
+volumes:
+  pgdata:
