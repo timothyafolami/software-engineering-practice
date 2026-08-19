@@ -1,0 +1,23 @@
+# Rust build artifacts (every rust/*/target dir in this lab)
+**/target/
+# Cargo.lock IS committed: every rust crate here is a binary, not a library,
+# and this repo's whole point is that a clone reproduces what was measured.
+
+# Node
+**/node_modules/
+
+# C++ build output
+**/*.o
+**/*.out
+**/a.out
+
+# Java build output
+**/*.class
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
