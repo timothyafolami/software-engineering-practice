@@ -1,0 +1,10 @@
+{
+  "name": "sep-layer4-topic6",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Layer 4 Topic 6 -- the idempotent consumer, Node.js side",
+  "type": "commonjs",
+  "scripts": { "consume": "node idempotent_consumer.js" },
+  "dependencies": { "pg": "^8.16.0" },
+  "engines": { "node": ">=20" }
+}
