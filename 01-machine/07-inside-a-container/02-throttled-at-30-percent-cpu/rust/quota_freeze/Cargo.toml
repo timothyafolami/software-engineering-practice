@@ -1,0 +1,17 @@
+[package]
+name = "quota_freeze"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# tokio is the point of this experiment, not an incidental choice: its
+# multi_thread worker count comes from std::thread::available_parallelism(),
+# which is the only call in this whole topic that reads the cgroup CPU
+# bandwidth limit without being asked to.
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
+# libc, for clock_gettime(CLOCK_THREAD_CPUTIME_ID). Charging wall time to a
+# thread the budget has parked would bill it for its own punishment.
+libc = "0.2"
+
+[profile.release]
+debug = false
