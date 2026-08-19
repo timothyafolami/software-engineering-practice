@@ -1,0 +1,200 @@
+# Layer 2 · The shared lab.
+#
+# Service names, ports, volume paths and the compose network name are fixed by
+# lab/README.md and are load-bearing: every `docker compose exec`, every k6
+# target URL and every Toxiproxy proxy name in the topic READMEs uses them
+# literally. Do not rename anything here without editing the seven topics too.
+#
+# The compose project name must stay `lab` (it defaults to this directory's
+# name) so that the network is `lab_default`, which Topic 5 disconnects by
+# name. Check with `docker network ls` if that command ever says no such
+# network.
+#
+# Image tags follow the pins in lab/README.md. If a tag fails to pull, run
+# `docker pull <image>` and pick the nearest published patch release rather
+# than silently floating to :latest -- a drifting tag invalidates every table
+# recorded against it.
+
+services:
+  # ---------------------------------------------------------------- api ----
+  # The service under test. One image, several code paths, selected by the
+  # environment variables below. Nothing else changes between runs of a topic.
+  #
+  #   VARIANT           topic 1  COLD | WARM | WARM_TUNED
+  #   POOL_PROFILE      topic 2  default | wide | fast_timeout | shed
+  #   TIMEOUT_PROFILE   topic 3  none | flat | budget | full
+  #   KEEPALIVE_PROFILE topic 4  mismatched | ordered | ordered_bounded
+  #   PROTO             topic 6  h1 | h2
+  api:
+    build: ./api
+    environment:
+      VARIANT: ${VARIANT:-WARM}
+      POOL_PROFILE: ${POOL_PROFILE:-default}
+      TIMEOUT_PROFILE: ${TIMEOUT_PROFILE:-none}
+      KEEPALIVE_PROFILE: ${KEEPALIVE_PROFILE:-mismatched}
+      PROTO: ${PROTO:-h1}
+      FANOUT: ${FANOUT:-5}          # topic 6 raises this to ~20
+      # topic 5: default | none | <seconds>. See build_client() in api/app.py.
+      KEEPALIVE_EXPIRY: ${KEEPALIVE_EXPIRY:-default}
+      # api talks to `upstream` THROUGH toxiproxy, never directly -- if it
+      # talked directly, every latency toxic in topics 1, 3 and 6 would be a
+      # no-op and the result would look like a disproved prediction.
+      # Overridable, and Topic 5 is the one topic that must override it.
+      # Everywhere else the fault is injected in the network, so api has to
+      # talk THROUGH the proxy or every toxic is a no-op. Topic 5's fault is a
+      # NAME moving to a new address, and the client whose pool is supposed to
+      # outlive that name is api's. Through toxi, the name `upstream` is
+      # resolved by toxiproxy -- toxiproxy dials a fresh TCP connection per
+      # proxied connection and re-resolves, so the alias move is absorbed
+      # before api can notice it, api's pool holds sockets to `toxi` which
+      # never moved, and the topic measures nothing. Run topic 5 as:
+      #   UPSTREAM_URL=http://upstream:9000 docker compose up -d api
+      UPSTREAM_URL: ${UPSTREAM_URL:-http://toxi:8475}
+      # ...and the DATABASE path goes through toxiproxy too, for the same
+      # reason. Topic 2's experiment says "Toxiproxy adds 100 ms to the
+      # database path so W is a known constant", and Little's Law is the whole
+      # topic: with an unproxied, container-local database, W is under a
+      # millisecond, the pool ceiling is thousands of rps, and the uvicorn
+      # worker's CPU saturates long before fifteen connections are all busy --
+      # so the pool never exhausts and the topic measures nothing.
+      #   curl -X POST localhost:8474/proxies/db/toxics \
+      #     -d '{"type":"latency","attributes":{"latency":100,"jitter":0}}'
+      # `docker compose exec db psql -U app` still talks to db directly, which
+      # is what you want: the observer should not sit behind the fault.
+      DATABASE_URL: postgresql+psycopg://app:app@toxi:8476/app
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+    ports: ["8000:8000"]
+    volumes: ["./caps:/caps"]        # so a capture written by `sniff` is readable here too
+    depends_on: [db, toxi, upstream]
+
+  # ----------------------------------------------------------- upstream ----
+  # The dependency that gets slow. Latency and error rate are tunable per
+  # request (?delay_ms= / ?fail_pct=) and per container (DELAY_MS / FAIL_PCT).
+  upstream:
+    build: ./upstream
+    environment:
+      NAME: upstream_a
+      # upstream/entrypoint.sh switches uvicorn -> hypercorn (h2c) on this
+      # variable. Without it here, `PROTO=h2 docker compose up -d api upstream`
+      # moves only the client half of Topic 6 and the server keeps speaking
+      # HTTP/1.1 -- a null result that reads as a disproved prediction.
+      PROTO: ${PROTO:-h1}
+      DELAY_MS: ${UPSTREAM_DELAY_MS:-0}
+      FAIL_PCT: ${UPSTREAM_FAIL_PCT:-0}
+      BODY_BYTES: ${UPSTREAM_BODY_BYTES:-1024}
+    expose: ["9000"]
+
+  # Second instance, deliberately NOT started by default. Topic 5 starts it and
+  # moves the `upstream` network alias onto it mid-run:
+  #   docker compose up -d upstream_b && docker network disconnect lab_default upstream
+  upstream_b:
+    build: ./upstream
+    profiles: ["failover"]
+    environment:
+      NAME: upstream_b
+      PROTO: ${PROTO:-h1}
+      DELAY_MS: ${UPSTREAM_DELAY_MS:-0}
+      FAIL_PCT: ${UPSTREAM_FAIL_PCT:-0}
+      BODY_BYTES: ${UPSTREAM_BODY_BYTES:-1024}
+    expose: ["9000"]
+    networks:
+      default:
+        aliases: ["upstream"]        # same name, different container
+
+  # --------------------------------------------------------------- toxi ----
+  # Toxiproxy. 8474 is the control API, 8475 is the proxy named `upstream`.
+  # Both numbers are quoted literally in topics 1, 3 and 6.
+  toxi:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    volumes: ["./toxi:/config:ro"]
+    ports: ["8474:8474"]
+    expose: ["8475", "8476"]
+
+  # ----------------------------------------------------------------- db ----
+  db:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+      # NOT /var/lib/postgresql/data. From Postgres 18 the official image puts
+      # PGDATA in a major-version subdirectory (/var/lib/postgresql/18/docker)
+      # and refuses to start -- exit 1, before the initdb scripts run -- if it
+      # finds a mount at the old path, because that mount would be silently
+      # unused and your data would not survive the next restart. Mount the
+      # parent instead, which is what the image documents for 18+.
+      - pgdata:/var/lib/postgresql
+    # Host 5432 is very often already taken by a Postgres installed on the Mac
+    # itself, and then `docker compose up -d db` fails with "port is already
+    # allocated" before anything else in the lab starts. No command in any of
+    # the seven topics reaches the database from the host -- they all go
+    # through `docker compose exec db psql -U app` -- so the host side of this
+    # mapping is a convenience, and 55432 is a convenience that starts.
+    ports: ["55432:5432"]
+
+  # ----------------------------------------------------------------- lb ----
+  # nginx standing in for an ALB / Envoy. Topic 4 switches its idle timeout and
+  # keepalive_requests with KEEPALIVE_PROFILE, the same variable `api` reads to
+  # pick uvicorn's --timeout-keep-alive. The whole topic is those two numbers
+  # disagreeing.
+  lb:
+    image: nginx:1.29-alpine
+    environment:
+      KEEPALIVE_PROFILE: ${KEEPALIVE_PROFILE:-mismatched}
+    volumes:
+      - ./lb/profiles:/etc/nginx/profiles:ro
+      - ./lb/entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    # Same reasoning as db above: 8080 on the host is the most contended port
+    # on a developer machine. Topic 4 drives the lb from the `load` container
+    # over the compose network (http://lb:8080), so the container port is the
+    # load-bearing one and stays 8080.
+    ports: ["18080:8080"]
+    depends_on: [api]
+
+  # --------------------------------------------------------------- load ----
+  # Open model, always. `constant-arrival-rate`, never a fixed VU count --
+  # see the coordinated-omission note in lab/README.md.
+  load:
+    image: grafana/k6:2.2.0
+    volumes: ["./scripts:/scripts:ro"]
+    environment:
+      # Deliberately EMPTY rather than defaulted to http://api:8000. A default
+      # here is set on every run, so it always wins over the per-script default
+      # in scripts/_shared.js -- and topic4.js, whose entire subject is the
+      # load balancer's connection pool, would silently bypass `lb` and drive
+      # `api` directly. An empty value is falsy in k6's __ENV, so each script's
+      # own default applies unless you export TARGET yourself.
+      TARGET: ${TARGET:-}
+      # Empty for the same reason. A value set here is set on EVERY run, so it
+      # always beat the per-script default in `__ENV.RATE || 150`: topic3.js
+      # says 150 rps for 180 s and got 200 rps for 60 s, topic4.js says 10 rps
+      # for 10 m and got the same 200/60, topic5.js's 300 s window closed after
+      # 60 s. Every script in scripts/ ran at one rate for one minute no matter
+      # what its own header claimed, and topic 3's fault -- injected at t=60 s
+      # by its own instructions -- landed after the load generator had already
+      # stopped. Leave these empty; export RATE/DURATION only when you mean to
+      # override a script deliberately.
+      RATE: ${RATE:-}
+      DURATION: ${DURATION:-}
+    entrypoint: ["k6"]
+    profiles: ["tools"]              # started explicitly via `docker compose run --rm load`
+
+  # -------------------------------------------------------------- sniff ----
+  # Shares api's network namespace, so `tcpdump -i any` in here sees exactly
+  # what api sees. This is the only capture pattern that works identically on
+  # macOS (where containers live inside Docker Desktop's Linux VM and your host
+  # has no veth to attach to) and in Linux CI.
+  sniff:
+    image: alpine:3
+    network_mode: "service:api"
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes: ["./caps:/caps"]
+    command: ["sh", "-c", "apk add --no-cache tcpdump iproute2 bind-tools >/dev/null && sleep infinity"]
+    depends_on: [api]
+
+volumes:
+  pgdata:
