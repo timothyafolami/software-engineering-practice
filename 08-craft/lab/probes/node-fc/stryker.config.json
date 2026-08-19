@@ -1,0 +1,10 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "_comment": "Topic 8, experiment 4: run Stryker over the SAME algorithm mutmut ran over, and record BOTH totals. Stryker discards mutants that would not compile, which changes the denominator -- so a Stryker score and a mutmut score are not the same unit.",
+  "packageManager": "npm",
+  "testRunner": "vitest",
+  "mutate": ["pagination.js"],
+  "reporters": ["clear-text", "progress"],
+  "coverageAnalysis": "perTest",
+  "thresholds": { "high": 90, "low": 70, "break": null }
+}
