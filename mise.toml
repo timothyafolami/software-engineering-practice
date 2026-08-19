@@ -1,0 +1,74 @@
+# Toolchain pins for the whole lab.
+#
+# Six languages, one file. `mise install` gets every one of them at the exact
+# version the code in this repo was verified against.
+#
+#   brew install mise          # or: curl https://mise.run | sh
+#   mise install               # installs everything below
+#   mise doctor                # confirms your shell is activated
+#
+# These are NOT aspirational versions. Every number here is what was actually
+# on the machine when the ~530 programs in this repo were compiled and run, so
+# pinning to them reproduces a known-good state rather than a hoped-for one.
+# Where the prose assumes something newer, that is called out below.
+
+[tools]
+python = "3.13.5"
+node = "24.14.0"
+go = "1.24.5"
+rust = "1.97.1"
+java = "temurin-21.0.2+13.0.LTS"
+
+# C++ is deliberately absent. There is no sane cross-platform pin for a system
+# compiler, and mise does not manage one. The lab was verified with Apple
+# clang 21 (`clang++ --version`). Any C++17-capable compiler works; the
+# experiments use nothing exotic beyond <thread>, <atomic> and <chrono>.
+# On Linux, g++ 13+ is fine. Two topics need platform guards either way —
+# epoll on Linux vs kqueue on macOS — and those are handled in the source.
+
+[env]
+# Keep language toolchains from scribbling outside the repo.
+GOTOOLCHAIN = "local"
+
+# Auto-create and auto-activate a virtualenv on `cd` into this repo.
+# mise pins the *interpreter*; this is what holds the *packages*.
+# Install into it with uv, which is already on this machine:
+#     uv pip install -r <some-topic>/python/requirements.txt
+# There are 17 requirements.txt files across the lab, one per topic that
+# needs deps. Install them as you reach each topic rather than all at once —
+# several pull heavy ML wheels that most layers never touch.
+_.python.venv = { path = ".venv", create = true }
+
+[tasks.versions]
+description = "Print every toolchain version, to check against the table in SEQUENCE.md"
+run = """
+echo "python  $(python3 -V 2>&1 | awk '{print $2}')"
+echo "node    $(node -v)"
+echo "go      $(go version | awk '{print $3}')"
+echo "rust    $(rustc --version | awk '{print $2}')"
+echo "java    $(java -version 2>&1 | head -1 | sed 's/.*\\"\\(.*\\)\\".*/\\1/')"
+echo "clang   $(clang++ --version | head -1 | sed 's/.*version \\([0-9.]*\\).*/\\1/')"
+"""
+
+# ---------------------------------------------------------------------------
+# Known gaps between these pins and what the prose assumes
+# ---------------------------------------------------------------------------
+#
+# 1. Go 1.24.5 is NOT container-aware for GOMAXPROCS. That landed in 1.25.
+#    Several READMEs say `automaxprocs` is redundant in new code — on this pin
+#    it is not, and Go will read the host CPU count straight through a cgroup
+#    quota. Topic `01-machine/07-inside-a-container/03-*` is built to show
+#    exactly this, so the pin is arguably the more instructive one: you get to
+#    watch the bug before you get the version that fixes it.
+#
+# 2. Python 3.13.5 has no free-threading build here. Topic
+#    `01-machine/07-inside-a-container/07-free-threaded-python-*` needs a `3.14t`
+#    interpreter. Add it alongside when you reach that topic:
+#        mise use python@3.14t
+#    and assert `sys._is_gil_enabled() is False` before believing any number
+#    it prints.
+#
+# 3. Docker images are pinned separately, in each compose file — and several
+#    are currently on `:latest` or disagree with each other (postgres 17 vs 18
+#    vs 18.6, k6 1.4.0 vs 2.2.0 vs latest). That is the reproducibility hole
+#    that matters most for anyone cloning this repo. Fix before publishing.
