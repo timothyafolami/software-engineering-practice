@@ -1,0 +1,20 @@
+# Layer 5 lab - scrape config.
+#
+# 1s is far below what you would run in production and deliberate here: this
+# layer is about transitions that last seconds, and a 15s scrape interval
+# turns a collapse into a single sample.
+global:
+  scrape_interval: 1s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: lab
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - app:8000
+          - gateway:8000
+          - service-b:8000
+          - service-c:8000
+    # Targets that are not up in the current profile simply fail to scrape.
+    # That is fine and visible; it is not a misconfiguration.
