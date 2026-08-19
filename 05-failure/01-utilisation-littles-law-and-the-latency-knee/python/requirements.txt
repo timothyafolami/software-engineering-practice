@@ -1,0 +1,8 @@
+# Layer 5 / Topic 1 - Python runs against the real stack, so these are real.
+# Install with:  python3 -m pip install -r requirements.txt
+fastapi>=0.110
+uvicorn>=0.27
+sqlalchemy>=2.0
+asyncpg>=0.29          # async driver SQLAlchemy uses for the pooled /work path
+psycopg[binary]>=3.1   # sync driver, used only to create failure_lab at startup
+# (no HTTP client dependency: the load generator uses asyncio streams)
