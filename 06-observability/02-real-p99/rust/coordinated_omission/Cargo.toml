@@ -1,0 +1,11 @@
+[package]
+name = "coordinated_omission"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies, and specifically no tokio. That is the point of this file:
+# the standard library gives you threads and nothing else, so an open-loop
+# generator costs one OS thread per in-flight request unless you go and choose
+# an async runtime. Compare the thread count this prints against the Go and
+# Node versions.
+[dependencies]
