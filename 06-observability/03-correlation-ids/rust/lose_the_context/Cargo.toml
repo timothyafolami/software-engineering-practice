@@ -1,0 +1,16 @@
+[package]
+name = "lose_the_context"
+version = "0.1.0"
+edition = "2021"
+
+# tokio, because the boundary this topic is about is `tokio::spawn`: a future
+# is a value that can be polled from any worker thread, so a thread-local
+# "current span" does not follow it. Everything else here -- the span, the
+# W3C traceparent codec, and the Instrument combinator -- is written out in
+# main.rs rather than pulled from `tracing`, so that the ~25 lines that make
+# propagation work are on the page instead of behind a crate.
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[profile.release]
+debug = false
