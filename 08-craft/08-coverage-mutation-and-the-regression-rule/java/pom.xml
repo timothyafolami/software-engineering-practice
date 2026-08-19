@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PIT configuration for topic 8's Java arm.
+
+  NOT VERIFIED ON THIS MACHINE: Maven is not installed here, so this file has
+  never been parsed and none of the versions below have ever been resolved
+  against a repository. It is written from PIT's documented Maven interface.
+  When you install Maven, expect to bump at least the three version numbers
+  (`mvn versions:display-plugin-updates` prints them) and treat a resolution
+  failure as a stale pin rather than a broken setup.
+
+  What IS verified here: `src/main/java/craft/core/Pagination.java` and
+  `src/test/java/craft/weak/WeakChecks.java` compile with JDK 21's javac and
+  the offline demo runs (`./run.sh`, step 1).
+
+  The whole point of this arm is in `<mutationCoverage>`'s cost model: PIT
+  mutates BYTECODE, so `mvn test-compile` runs javac ONCE and every mutant
+  after that is a classloader trick. Nothing here recompiles per mutant, which
+  is why `withHistory` and `targetTests` are worth setting: they take a run
+  that is already cheap and make it cheap enough for a pull request.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>craft</groupId>
+  <artifactId>page-mutants</artifactId>
+  <version>1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+  <name>topic8-java-pit</name>
+  <description>
+    The same page() as topic 8's Python, Node, Rust and C++ arms, with a
+    deliberately weak JUnit 5 suite, so PIT's denominator can be put next to
+    mutmut's and Stryker's on one algorithm.
+  </description>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>21</maven.compiler.release>
+
+    <!-- Pinned, and unresolved on this machine. See the header comment. -->
+    <junit.version>5.11.0</junit.version>
+    <surefire.version>3.5.2</surefire.version>
+    <pitest.version>1.19.0</pitest.version>
+    <pitest.junit5.version>1.2.1</pitest.junit5.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${surefire.version}</version>
+      </plugin>
+
+      <plugin>
+        <groupId>org.pitest</groupId>
+        <artifactId>pitest-maven</artifactId>
+        <version>${pitest.version}</version>
+        <dependencies>
+          <!-- Without this, PIT finds zero tests on a JUnit 5 project and
+               reports a mutation score of nothing at all, cheerfully. It is
+               the single most common way a first PIT run "works" and means
+               nothing: check the test count in the output before the score. -->
+          <dependency>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-junit5-plugin</artifactId>
+            <version>${pitest.junit5.version}</version>
+          </dependency>
+        </dependencies>
+        <configuration>
+          <!-- Mutate the target and nothing else. WeakChecks lives in
+               craft.weak and holds the hand-applied mutant; mutating the
+               measuring instrument would measure nothing. -->
+          <targetClasses>
+            <param>craft.core.*</param>
+          </targetClasses>
+          <targetTests>
+            <param>craft.weak.*Test</param>
+          </targetTests>
+
+          <!-- DEFAULTS is PIT's own recommended set. STRONGER and ALL exist;
+               ALL in particular inflates the denominator with mutants nobody
+               would ever write, which is a good way to make a score look bad
+               and a bad way to improve a suite. Change this deliberately, and
+               write down which group produced the number in your table. A
+               PIT score without its mutator group is not a number. -->
+          <mutators>
+            <param>DEFAULTS</param>
+          </mutators>
+
+          <outputFormats>
+            <param>HTML</param>
+            <param>XML</param>
+          </outputFormats>
+          <timestampedReports>false</timestampedReports>
+
+          <!-- Incremental analysis: PIT stores what it learned and re-runs only
+               the mutants affected by changed code. This is the feature that
+               makes per-PR mutation testing practical on the JVM and has no
+               equivalent in the Python or C++ arms. -->
+          <withHistory>true</withHistory>
+
+          <!-- Report, do not gate. A threshold here would be this topic's own
+               Goodhart warning applied to itself: the cheapest way to raise a
+               mutation score is to delete the module. Put the gate in CI on a
+               *regression* in the score, if anywhere. -->
+          <mutationThreshold>0</mutationThreshold>
+          <failWhenNoMutations>true</failWhenNoMutations>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
