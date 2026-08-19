@@ -1,0 +1,10 @@
+[package]
+name = "latency_knee"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }
+
+[profile.release]
+debug = false
