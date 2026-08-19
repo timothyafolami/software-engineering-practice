@@ -1,0 +1,11 @@
+[package]
+name = "evil-build"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+# No dependencies, so this builds offline. The point is build.rs itself:
+# Cargo COMPILES AND EXECUTES it on your machine, with your permissions, at
+# BUILD time -- before `cargo run` and before any of your code. Rust's
+# compile-time safety story (Topics 2 and 4) offers nothing here.
+[dependencies]
