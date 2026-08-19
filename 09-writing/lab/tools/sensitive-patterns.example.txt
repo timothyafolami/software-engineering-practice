@@ -1,0 +1,16 @@
+# Layer 9 sanitisation gate -- local pattern file.
+#
+# Copy to sensitive-patterns.txt and fill in with YOUR organisation's strings.
+# One Python regex per line. Blank lines and #-comments ignored.
+# sanitise_gate.py reads sensitive-patterns.txt automatically if it exists.
+#
+# Keep the real file out of anything you publish; it is a list of exactly the
+# words you are trying not to publish.
+#
+# Shapes worth adding (examples, not real values):
+#
+# (?i)\backme[-_ ]?corp\b            # employer name and its variants
+# (?i)\b(checkout-svc|pricing-svc)\b # internal service names
+# \bprod-[a-z0-9-]+\b                # host naming scheme
+# (?i)\bcustomer-\d+\b               # customer identifiers
+# (?i)\b(bigcustomer|othercustomer)\b# named accounts
