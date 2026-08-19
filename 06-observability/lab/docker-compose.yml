@@ -1,0 +1,223 @@
+# Layer 6 - the shared lab. One stack, seven topics.
+#
+# Service names, ports, env vars and script names are fixed by lab/README.md;
+# later topics depend on these exact strings. If you rename something, rename
+# it there first.
+#
+# VERIFICATION STATUS: brought up, built and driven under load on 2026-08-19
+# (Docker 29.5.3, 4 CPU / 5.1 GB linuxkit VM, arm64). Five things had to be
+# fixed to get it there and each is commented at the line it affects: the
+# postgres:18 data directory, the db healthcheck answering on the wrong
+# transport, the seed's int4 overflow, `worker` losing its OTel bootstrap, and
+# a host port clash on `pricing`. See ../VERIFIED.md for what each run showed.
+
+name: layer6-lab
+
+services:
+  db:
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: lab
+      POSTGRES_DB: lab
+      # Data checksums, so a corrupt page is an error rather than a wrong
+      # answer. postgres:18 already turns these on by default, so this line is
+      # documentation of intent rather than a change of behaviour.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - max_connections=100
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      # postgres:18 moved the data directory. The image now puts PGDATA in a
+      # major-version subdirectory (/var/lib/postgresql/18/docker) so that
+      # `pg_upgrade --link` does not cross a mount boundary, and it REFUSES TO
+      # START if it finds a mount at the old /var/lib/postgresql/data path.
+      # Mount the parent. Every pre-18 tutorial you will find says
+      # `/var/lib/postgresql/data`; that is the single most likely reason a
+      # postgres:18 container exits 1 on first boot.
+      - pgdata:/var/lib/postgresql
+      # Runs once, on an empty volume. `docker compose down -v` makes it run
+      # again, which takes a few minutes.
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5433:5432"     # 5433 on the host: macOS may already have a local PG
+    healthcheck:
+      # -h 127.0.0.1 is load bearing. While the init scripts in
+      # /docker-entrypoint-initdb.d run, the entrypoint has a TEMPORARY server
+      # up with listen_addresses='' -- reachable on the unix socket and not on
+      # TCP. A bare `pg_isready` uses the socket, goes green in six seconds,
+      # and `depends_on: service_healthy` then starts `api` against a port
+      # nothing is listening on yet. Asking over TCP is asking the question
+      # the dependents actually care about.
+      test: ["CMD-SHELL", "pg_isready -U lab -d lab -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 5s
+      # First boot seeds 2M orders and 4M items before TCP opens; that took
+      # ~95s here. 60 x 5s leaves room on a slower disk without hanging
+      # forever if the seed is genuinely broken.
+      retries: 60
+
+  pricing:
+    build: ./pricing
+    environment:
+      # Topic 2's `pricing_tail` defect: 99 requests in 8ms, the 100th in 900ms.
+      PRICING_TAIL: "${PRICING_TAIL:-on}"
+      PRICING_TAIL_EVERY: "100"
+      PRICING_TAIL_MS: "900"
+      PRICING_FAST_MS: "8"
+      # Topic 3's third break: build the tracer from a fresh context instead of
+      # the incoming traceparent.
+      BREAK: "${BREAK:-}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otelcol:4318"
+      OTEL_SERVICE_NAME: "pricing"
+    ports:
+      # Host side is overridable because 8081 is a popular port and a clash
+      # here stops the whole stack coming up. Nothing in the lab reaches
+      # `pricing` from the host -- `api` talks to it over the compose network
+      # on 8081 regardless -- so moving the host side costs you nothing.
+      - "${PRICING_HOST_PORT:-8081}:8081"
+    depends_on:
+      otelcol:
+        condition: service_started
+
+  api:
+    build: ./api
+    environment:
+      DATABASE_URL: "postgresql+psycopg://lab:lab@db:5432/lab"
+      PRICING_URL: "http://pricing:8081"
+      # --- Topic 2: the five planted defects. Disable exactly one at a time.
+      #     n_plus_one | sync_http_in_async | small_pool | missing_index | pricing_tail
+      DEFECT_DISABLE: "${DEFECT_DISABLE:-}"
+      # --- Topic 3: break trace propagation one way at a time.
+      #     queue_no_traceparent | executor_no_ctx | pricing_fresh_ctx | collector_strip
+      BREAK: "${BREAK:-}"
+      # --- Topic 4: add an unbounded label to the request counter.
+      CARDINALITY_DEMO: "${CARDINALITY_DEMO:-}"
+      OTEL_METRIC_CARDINALITY_LIMIT: "${OTEL_METRIC_CARDINALITY_LIMIT:-}"
+      # --- Topics 2 and 5: sampler knobs.
+      OTEL_TRACES_SAMPLER: "${OTEL_TRACES_SAMPLER:-parentbased_always_on}"
+      OTEL_TRACES_SAMPLER_ARG: "${OTEL_TRACES_SAMPLER_ARG:-}"
+      # --- Topics 1, 2, 5: the semconv migration lever. `http/dup` emits both
+      #     the old and the current attribute names, which is how you find out
+      #     which one your dashboard was keyed on.
+      OTEL_SEMCONV_STABILITY_OPT_IN: "${OTEL_SEMCONV_STABILITY_OPT_IN:-http,database}"
+      OTEL_SERVICE_NAME: "api"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otelcol:4318"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+      OTEL_LOGS_EXPORTER: "none"      # see lab/README: logs SDK is not stable
+      OTEL_PYTHON_LOG_CORRELATION: "true"
+    # Topic 5 step 4 and Topic 7 scenario W both want to read CFS throttling
+    # counters, and there is nothing to read unless a quota is actually set.
+    # Unset, this is `cpus: 0` -- no limit -- and inside the container
+    # /sys/fs/cgroup/cpu.max reads `max 100000` with nr_periods AT ZERO. That
+    # zero means the quota was never applied, which is a different statement
+    # from "the quota was applied and never hit"; only the second one is a
+    # result. Set API_CPUS to put a real quota on:
+    #
+    #   API_CPUS=0.5 docker compose up -d api
+    #   docker compose exec api cat /sys/fs/cgroup/cpu.max    # 50000 100000
+    #   docker compose exec api cat /sys/fs/cgroup/cpu.stat   # nr_throttled > 0
+    cpus: "${API_CPUS:-0}"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      pricing:
+        condition: service_started
+      otelcol:
+        condition: service_started
+
+  worker:
+    build: ./api          # same image, different entrypoint
+    # `opentelemetry-instrument` is not decoration here, and dropping it is
+    # silent. Without it the SDK is never installed into the process: every
+    # tracer is the no-op ProxyTracer, so `worker` exports NOTHING to the
+    # collector, the LoggingInstrumentor never patches logging, and every
+    # worker log line carries trace_id "". Topic 3's first break -- does the
+    # consumer join the producer's trace? -- has no observable at all in that
+    # state, because there is no consumer span in Tempo either way.
+    command: ["opentelemetry-instrument", "python", "-m", "worker"]
+    environment:
+      DATABASE_URL: "postgresql+psycopg://lab:lab@db:5432/lab"
+      PRICING_URL: "http://pricing:8081"
+      BREAK: "${BREAK:-}"
+      OTEL_SERVICE_NAME: "worker"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otelcol:4318"
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+      OTEL_LOGS_EXPORTER: "none"
+      OTEL_PYTHON_LOG_CORRELATION: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      otelcol:
+        condition: service_started
+
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.140.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      # Topic 3's fourth break is a config edit, not an env var: a collector
+      # config is static YAML with no conditionals. See otelcol/config.yaml.
+      BREAK: "${BREAK:-}"
+    volumes:
+      - ./otelcol/config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+      - "8888:8888"     # the collector's own metrics -- read these in Topic 4
+    depends_on:
+      lgtm:
+        condition: service_started
+
+  lgtm:
+    image: grafana/otel-lgtm@sha256:069e79be4fcc648b13f22ded28146f0b2d94f7f48681a55aa4995566a0bbdd02
+    environment:
+      ENABLE_LOGS_ALL: "true"
+    # Topics 6 and 7 need Prometheus RULES, and this image ships a Prometheus
+    # with no `rule_files:` and no `scrape_configs:` at all -- it is an
+    # OTLP-receive-only Prometheus. Two consequences, both of which look like
+    # your query being wrong rather than the server being configured this way:
+    #   * `curl localhost:9090/api/v1/rules` returns an empty group list
+    #     forever, no matter what you write, until you mount rules in.
+    #   * `prometheus_tsdb_head_series` does not exist, because Prometheus
+    #     does not scrape itself. Topic 4 wants a series count; use
+    #     `count({__name__="http_server_requests_total"})` instead.
+    # To do Topic 6 Part 2 you must override BOTH files -- the rules and the
+    # config that references them -- because rule_files lives in the config
+    # that is baked into the image:
+    #   volumes:
+    #     - ./prometheus/rules.yml:/otel-lgtm/rules.yml:ro
+    #     - ./prometheus/prometheus.yaml:/otel-lgtm/prometheus.yaml:ro
+    # Start from the image's own /otel-lgtm/prometheus.yaml and add
+    # `rule_files: [/otel-lgtm/rules.yml]` to it; replacing it wholesale drops
+    # the `otlp:` block and silently changes every label you query by.
+    ports:
+      - "3000:3000"     # Grafana
+      - "9090:9090"     # Prometheus
+      - "3100:3100"     # Loki
+      - "3200:3200"     # Tempo
+    volumes:
+      - lgtmdata:/data
+
+  k6:
+    image: grafana/k6:2.2.0
+    profiles: ["load"]           # only runs when you ask: `compose run --rm k6`
+    environment:
+      API_URL: "http://api:8000"
+      # k6's OTel metric output moved out of the `experimental-` prefix during
+      # the v1 line. Check `k6 --out help` in YOUR build before trusting either
+      # spelling -- this is the five-minute confusion lab/README warns about.
+      K6_OUT: "${K6_OUT:-}"
+    volumes:
+      - ./k6:/scripts:ro
+    entrypoint: ["k6"]
+
+volumes:
+  pgdata:
+  lgtmdata:
