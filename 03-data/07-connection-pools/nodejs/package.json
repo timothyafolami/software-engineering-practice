@@ -1,0 +1,12 @@
+{
+  "name": "sep-layer3-pool-defaults",
+  "private": true,
+  "description": "Topic 7: node-postgres pool defaults and the failure that is silence",
+  "main": "pool_defaults.js",
+  "scripts": {
+    "start": "node pool_defaults.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}
