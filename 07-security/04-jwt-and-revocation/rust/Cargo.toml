@@ -1,0 +1,16 @@
+[package]
+name = "jwt_demo"
+version = "0.1.0"
+edition = "2021"
+
+# jsonwebtoken is not in this machine's cargo cache. One-time online fetch:
+#     cargo fetch
+# then `cargo run`. The point of the crate here is type-level: Validation has
+# an `algorithms` field with no "accept anything" value, and DecodingKey is
+# typed by key kind, so RS256/HS256 confusion is a TYPE error, not a runtime
+# acceptance -- the same "enlist the compiler" pattern as Topic 2's sqlx.
+[dependencies]
+jsonwebtoken = "9"
+serde = { version = "1", features = ["derive"] }
+rsa = "0.9"
+rand = "0.8"
