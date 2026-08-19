@@ -1,0 +1,12 @@
+[package]
+name = "slow_not_absent"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The only dependency, and it is the subject: tokio's timers, semaphore and
+# TCP types are what the topic's Rust paragraph is about.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
+
+[profile.release]
+debug = false
