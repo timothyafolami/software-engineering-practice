@@ -1,0 +1,10 @@
+[package]
+name = "cancellation_safety"
+version = "0.1.0"
+edition = "2021"
+
+# tokio only. The HTTP is hand-written on top of TcpStream on purpose: this
+# program is about what DROPPING a future does to a half-written request, and
+# a client library would hide exactly that.
+[dependencies]
+tokio = { version = "1", features = ["full"] }
