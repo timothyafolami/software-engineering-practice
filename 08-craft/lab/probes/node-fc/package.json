@@ -1,0 +1,17 @@
+{
+  "name": "craft-lab-node-fc",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Topic 5's fast-check cross-check and topic 8's Stryker denominator cross-check, on one line-for-line port of page().",
+  "scripts": {
+    "test": "vitest run",
+    "mutate": "stryker run"
+  },
+  "devDependencies": {
+    "fast-check": "^4.9.0",
+    "vitest": "^3.2.4",
+    "@stryker-mutator/core": "^9.2.0",
+    "@stryker-mutator/vitest-runner": "^9.2.0"
+  }
+}
