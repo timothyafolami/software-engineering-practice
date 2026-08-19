@@ -1,0 +1,11 @@
+[package]
+name = "syscall_cost"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "syscall_cost"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
