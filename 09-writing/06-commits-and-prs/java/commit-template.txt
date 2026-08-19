@@ -1,0 +1,25 @@
+# <ISSUE-ID>: <what the change does>
+#
+# Why now:
+#   The trigger, with the measurement and its source.
+#
+# Rejected first:
+#   The approach you abandoned, and why.
+#
+# Constraint:
+#   The invariant that lives nowhere else. Concurrency belongs here: which lock
+#   guards what, whether this is safe to publish across threads, whether a
+#   blocking call here pins a carrier thread.
+#
+# Verified:
+#   What you ran, what you observed, on which JDK. Virtual-thread behaviour
+#   differs by release; name it.
+#
+# Refs: <issue / JEP>
+#   The ticket holds the argument. Write its CONCLUSION here anyway -- trackers
+#   get consolidated, project keys get remapped, and the repository is what is
+#   left.
+#
+# Install (from inside the repo you are committing to -- the path must be ABSOLUTE,
+#          because git resolves commit.template relative to the cwd at commit time):
+#   git config commit.template $(cd /path/to/this/lab && pwd)/09-writing/06-commits-and-prs/java/commit-template.txt
