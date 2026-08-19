@@ -1,0 +1,12 @@
+[package]
+name = "signal_cost"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies on purpose: this must build with no network. It also means
+# every cost measured below is the language and the standard library, with no
+# crate author's choices in between.
+[dependencies]
+
+[profile.release]
+debug = false
