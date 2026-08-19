@@ -1,0 +1,10 @@
+[package]
+name = "blocking_pool_resolver"
+version = "0.1.0"
+edition = "2021"
+
+# tokio only. reqwest and hickory-dns would each be interesting here, but the
+# mechanism this file is about -- WHICH THREAD POOL the blocking getaddrinfo
+# call lands on -- belongs to tokio, and adding a client would hide it.
+[dependencies]
+tokio = { version = "1", features = ["full"] }
