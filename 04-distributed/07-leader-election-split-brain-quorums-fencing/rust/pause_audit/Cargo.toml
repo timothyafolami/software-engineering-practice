@@ -1,0 +1,16 @@
+[package]
+name = "pause_audit"
+version = "0.1.0"
+edition = "2021"
+
+# tokio, because the point of including Rust in this topic is that a language
+# with no garbage collector still loses its lease. The hazard is scheduling, not
+# garbage, and it needs a scheduler to be scheduled by.
+#
+# Features are named individually rather than "full": rt is the current_thread
+# runtime, rt-multi-thread is the worker pool, time is the interval timer.
+[dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }
+
+[profile.release]
+debug = false
