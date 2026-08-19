@@ -1,0 +1,24 @@
+# <package>: <short summary, lowercase, no trailing period>
+#
+# Why now:
+#   The trigger, with the measurement and where it came from.
+#
+# Rejected first:
+#   The approach you abandoned, and why.
+#
+# Constraint:
+#   The invariant this shape depends on. Concurrency assumptions belong here:
+#   which goroutine owns this, what may be called from where, what must not
+#   block.
+#
+# Verified:
+#   What you ran, what you observed. Benchmarks: name the machine.
+#
+# Fixes #<issue>
+#
+# One logical change per commit. If this message needs the word "also",
+# it is two commits -- and `git log -L` on either line will return the wrong one.
+#
+# Install (from inside the repo you are committing to -- the path must be ABSOLUTE,
+#          because git resolves commit.template relative to the cwd at commit time):
+#   git config commit.template $(cd /path/to/this/lab && pwd)/09-writing/06-commits-and-prs/golang/commit-template.txt
