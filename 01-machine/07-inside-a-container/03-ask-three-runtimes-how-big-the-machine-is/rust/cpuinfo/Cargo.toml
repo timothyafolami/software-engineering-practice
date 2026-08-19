@@ -1,0 +1,10 @@
+[package]
+name = "cpuinfo"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies on purpose. The whole point of this probe is that
+# std::thread::available_parallelism() already answers the question that
+# every other runtime in this topic needed a library, a version bump or
+# twenty hand-written lines to answer.
+[dependencies]
