@@ -1,0 +1,28 @@
+# Layer 6 lab - `api` and `worker`.
+#
+# Pinned to the versions current in August 2026. Two of these pins are load
+# bearing rather than tidiness:
+#
+#   * opentelemetry-instrumentation must match the SDK's minor line, or
+#     `opentelemetry-instrument` silently instruments nothing.
+#   * psycopg 3 (not psycopg2) is what SQLAlchemy 2's `postgresql+psycopg`
+#     dialect binds to, and it is the one with async support.
+#
+# RESOLVED AND INSTALLED 2026-08-19, inside the image, on the unblock pass.
+# One pin did not exist: fastapi==0.121.4 was never published (the 0.121 line
+# stops at 0.121.3). Corrected to 0.121.3 -- the nearest real release in the
+# same minor, not a widened constraint. Every other pin below resolved exactly
+# as written.
+
+fastapi==0.121.3
+uvicorn[standard]==0.41.0
+sqlalchemy[asyncio]==2.0.44
+psycopg[binary,pool]==3.2.12
+requests==2.32.5
+
+opentelemetry-distro==0.60b0
+opentelemetry-exporter-otlp-proto-http==1.39.0
+opentelemetry-instrumentation-fastapi==0.60b0
+opentelemetry-instrumentation-sqlalchemy==0.60b0
+opentelemetry-instrumentation-requests==0.60b0
+opentelemetry-instrumentation-logging==0.60b0
