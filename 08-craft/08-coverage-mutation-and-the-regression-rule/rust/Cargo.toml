@@ -1,0 +1,15 @@
+# Topic 8's Rust arm: one library, no dependencies, so `cargo mutants` measures
+# the algorithm and not somebody else's crate. The lib name is `page_mutants`.
+[package]
+name = "page-mutants"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+
+# A mutation run rebuilds the crate once per mutant, so build settings are part
+# of the experiment's cost, not an afterthought. Debug profile, no optimisation:
+# `cargo mutants` is bound by compile time here, not by test time.
+[profile.test]
+opt-level = 0
