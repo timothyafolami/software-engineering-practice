@@ -1,0 +1,6 @@
+# Pinned loosely on purpose: this image is a teaching harness, not a
+# production deploy. Pin exactly in a real service.
+fastapi>=0.115
+uvicorn[standard]>=0.34
+asyncpg>=0.30
+psycopg2-binary>=2.9
