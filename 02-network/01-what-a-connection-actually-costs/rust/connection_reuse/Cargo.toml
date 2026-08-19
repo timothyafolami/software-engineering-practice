@@ -1,0 +1,8 @@
+[package]
+name = "connection_reuse"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies on purpose. Rust is in this topic to show the connection
+# with nothing between you and the socket, and std::net is enough for that.
+[dependencies]
