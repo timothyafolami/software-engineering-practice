@@ -1,0 +1,181 @@
+# Layer 3 shared lab -- the Docker path.
+#
+#   docker compose -f lab/docker/compose.yml up -d postgres-primary
+#   docker compose -f lab/docker/compose.yml up -d postgres-replica   # Topic 8
+#   docker compose -f lab/docker/compose.yml --profile pooler up -d   # Topic 7
+#
+# Service names are load-bearing: topic READMEs say "point it at pgbouncer" and
+# mean the service below. Do not rename them.
+#
+# WHY THIS EXISTS ALONGSIDE lab/local/: two topics genuinely need more than one
+# process talking to more than one Postgres -- Topic 7 (a pooler in front of the
+# database, and a CPU quota around the client) and Topic 8 (a streaming replica).
+# Everything else in the layer runs against a local Postgres and does not need
+# any of this.
+#
+# macOS NOTES, because Layer 1 got this wrong:
+#   * PGDATA is on a NAMED VOLUME, never a bind mount into /Users. Bind-mounted
+#     Postgres data on Docker Desktop is slow enough to swamp every measurement
+#     in this layer -- you would be benchmarking the file-sharing layer.
+#   * io_method stays at the Postgres 18 default of `worker`. io_uring is not
+#     usable inside Docker Desktop's Linux VM, so any number produced chasing it
+#     is a number about the VM.
+#   * Anything reading /sys/fs/cgroup (Topic 7's quota experiment) is Linux-only
+#     and must run INSIDE a container. That is what `api` is for.
+
+name: sep-layer3
+
+services:
+  postgres-primary:
+    image: postgres:18
+    container_name: sep-postgres-primary
+    ports:
+      - "55432:5432"
+    environment:
+      POSTGRES_USER: lab
+      POSTGRES_PASSWORD: lab
+      POSTGRES_DB: sep_lab_03_data
+      # Needed so pg_basebackup from the replica can authenticate over the
+      # compose network. scram is the modern default and worth keeping.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    command:
+      - postgres
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+    volumes:
+      # postgres:18 moved PGDATA to /var/lib/postgresql/18/docker and declares
+      # /var/lib/postgresql as its VOLUME. Mounting the named volume at the
+      # pre-18 .../data path silently parks it where the server never looks and
+      # the cluster lands in an anonymous volume instead. Mount the parent.
+      - primary-data:/var/lib/postgresql
+      - ./postgres/primary.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab -d sep_lab_03_data"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    shm_size: 1gb
+
+  # Topic 8 only. Cloned from the primary with pg_basebackup on first boot, then
+  # started as a hot standby. recovery_min_apply_delay makes the lag
+  # DETERMINISTIC, which is the entire reason to build it this way.
+  postgres-replica:
+    image: postgres:18
+    container_name: sep-postgres-replica
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    ports:
+      - "55433:5432"
+    environment:
+      PGUSER: lab
+      PGPASSWORD: lab
+      APPLY_DELAY: "${APPLY_DELAY:-2s}"
+    user: postgres
+    volumes:
+      - replica-data:/var/lib/postgresql      # see the note on the primary
+      - ./postgres/replica.conf:/etc/postgresql/replica.conf:ro
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        if [ ! -s "$$PGDATA/PG_VERSION" ]; then
+          echo "[replica] cloning postgres-primary with pg_basebackup"
+          rm -rf "$$PGDATA"/*
+          pg_basebackup -h postgres-primary -p 5432 -U lab -D "$$PGDATA" -Fp -Xs -R -P
+          cat /etc/postgresql/replica.conf >> "$$PGDATA/postgresql.auto.conf"
+          echo "recovery_min_apply_delay = '$$APPLY_DELAY'" >> "$$PGDATA/postgresql.auto.conf"
+          chmod 0700 "$$PGDATA"
+        fi
+        exec postgres
+    healthcheck:
+      test: ["CMD-SHELL", "psql -U lab -d sep_lab_03_data -tAc 'SELECT pg_is_in_recovery()' | grep -q t"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # Topic 7 only. Transaction mode: a server connection is held for the duration
+  # of a TRANSACTION, not a session, so hundreds of idle clients cost almost
+  # nothing. max_prepared_statements is the knob Topic 7 sweeps -- 0 breaks
+  # drivers that prepare, 200 makes the "asyncpg needs statement_cache_size = 0"
+  # advice obsolete on PgBouncer 1.21+.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: sep-pgbouncer
+    profiles: ["pooler"]
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    ports:
+      - "6432:6432"
+    environment:
+      DB_HOST: postgres-primary
+      DB_PORT: "5432"
+      DB_USER: lab
+      DB_PASSWORD: lab
+      DB_NAME: sep_lab_03_data
+      # edoburu/pgbouncer listens on 5432 unless told otherwise. compose.yml
+      # publishes 6432:6432 and lab/README.md documents host port 6432, so the
+      # container has to actually LISTEN there -- without this the published
+      # port maps to nothing, every host connection is refused, and the
+      # healthcheck below fails forever while the container sits in
+      # "health: starting".
+      LISTEN_PORT: "6432"
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "1000"
+      DEFAULT_POOL_SIZE: "20"
+      MAX_PREPARED_STATEMENTS: "${MAX_PREPARED_STATEMENTS:-200}"
+      ADMIN_USERS: lab
+      AUTH_TYPE: scram-sha-256
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U lab"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # The one HTTP service in this layer. Three endpoints, FastAPI + SQLAlchemy 2.0
+  # async + psycopg -- the production stack, so the pool being measured is the
+  # pool you actually ship.
+  api:
+    build: ./api
+    container_name: sep-api
+    depends_on:
+      postgres-primary:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      # Point LAB_DSN at postgres-primary or at pgbouncer to switch Topic 7's
+      # experiment. That single substitution is the whole of experiment 4.
+      LAB_DSN: "${LAB_DSN:-postgresql+psycopg://lab:lab@postgres-primary:5432/sep_lab_03_data}"
+      LAB_REPLICA_DSN: "${LAB_REPLICA_DSN:-}"
+      POOL_SIZE: "${POOL_SIZE:-5}"
+      MAX_OVERFLOW: "${MAX_OVERFLOW:-10}"
+      POOL_TIMEOUT: "${POOL_TIMEOUT:-30}"
+      ISOLATION: "${ISOLATION:-read committed}"
+      WORKERS: "${WORKERS:-0}"          # 0 = derive it from the cgroup quota
+    # Topic 7 experiment 6: change this and re-run worker_count.py inside the
+    # container. 0.5 / 1.0 / 2.0 are the three values that topic asks for.
+    cpus: ${CPUS:-2.0}
+
+  # Load generator, on the same network so it can name services directly.
+  # k6 is NOT installed on the host this lab was written on; running it here is
+  # how that stays true and the experiments still run.
+  k6:
+    image: grafana/k6:latest
+    container_name: sep-k6
+    profiles: ["load"]
+    depends_on:
+      - api
+    environment:
+      BASE_URL: "${BASE_URL:-http://api:8000}"
+    volumes:
+      - ./load:/scripts:ro
+    entrypoint: ["k6"]
+    command: ["run", "/scripts/pool_sweep.js"]
+
+volumes:
+  primary-data:
+  replica-data:
