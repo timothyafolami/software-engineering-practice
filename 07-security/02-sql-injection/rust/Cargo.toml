@@ -1,0 +1,15 @@
+[package]
+name = "sqli"
+version = "0.1.0"
+edition = "2021"
+
+# sqlx is the point of this file: the query! macro type-checks SQL against a
+# live database AT COMPILE TIME, so the injectable path (format! into
+# sqlx::query) is a deliberate departure from the ergonomic one.
+# Offline note: these crates are not in this machine's cargo cache. To build,
+# fetch them once with network access:
+#     cargo fetch
+# then `cargo run` (needs a Postgres on localhost:5432).
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres"] }
