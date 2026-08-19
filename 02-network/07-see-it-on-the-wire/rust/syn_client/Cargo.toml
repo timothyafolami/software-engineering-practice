@@ -1,0 +1,9 @@
+[package]
+name = "syn_client"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies. reqwest would be the idiomatic client, but it is not
+# vendored here and the point of this row is the connection count, which
+# std::net measures honestly with a hand-written request.
+[dependencies]
