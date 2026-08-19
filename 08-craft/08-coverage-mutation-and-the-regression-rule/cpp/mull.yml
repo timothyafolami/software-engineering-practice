@@ -1,0 +1,31 @@
+# mull configuration.
+#
+# NOT VERIFIED ON THIS MACHINE: mull is not installed here, so these keys have
+# never been parsed by the tool. They are written from mull's documented
+# interface. Check them against `mull-runner --help` and mull's own
+# documentation once you have installed it, and correct this file rather than
+# working around it. Two specific things to re-check: the mutator group names,
+# and whether your mull build reads this file from the working directory or
+# needs `MULL_CONFIG=$PWD/mull.yml`.
+#
+# What IS verified here: the target compiles with Apple clang and the weak
+# suite runs (`./run.sh`, step 1).
+#
+# The compiler pass reads this file at COMPILE time to decide which mutants to
+# embed in the IR; mull-runner reads it at RUN time for the timeout. That split
+# is the whole reason mull is fast: one compilation carries every mutant, and
+# the runner switches them on one at a time.
+
+mutators:
+  - cxx_all
+
+# Never mutate the measuring instrument. weak_test.cpp holds the suite and the
+# hand-applied mutant; a mutated assertion is not a finding.
+excludePaths:
+  - .*weak_test\.cpp
+
+# Milliseconds. `page` is microseconds of work, but a mutant that flips `<` to
+# `<=` makes walk_pages loop to its max_pages bound, which is legitimately
+# slower rather than broken. Too tight a timeout records those as `timeout`,
+# and a timeout is not a kill.
+timeout: 5000
