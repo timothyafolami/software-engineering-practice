@@ -1,0 +1,140 @@
+# Layer 8 shared lab. Service names, ports and env vars are the contract every
+# topic README depends on -- they are specified in lab/README.md and repeated
+# nowhere else. Change them there or not at all.
+#
+#   docker compose up -d api postgres        # topics 1, 4
+#   docker compose up -d                     # topics 3, 6, 7
+#
+# Everything here runs Linux inside Docker Desktop's VM. Shapes transfer;
+# absolute numbers do not.
+
+name: craft-lab
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: craft_lab
+    ports:
+      - "55442:5432"
+    volumes:
+      # A NAMED VOLUME, never a bind mount into /Users/... On Docker Desktop a
+      # bind mount routes every write through file sharing, and topic 7's
+      # latency ladder would then be measuring that instead of your timeout
+      # budget. This one line is the difference between a finding and an artifact.
+      #
+      # And the mount point is /var/lib/postgresql, NOT .../data. From postgres:18
+      # the official image stores the cluster under a major-version subdirectory
+      # (/var/lib/postgresql/18/docker) so that `pg_upgrade --link` does not have
+      # to cross a mount boundary. A volume at the old .../data path is now an
+      # "unused mount/volume" and the entrypoint REFUSES TO START rather than
+      # silently writing where you did not mount -- which is the right call and is
+      # also a container that exits 1 before any ladder in this layer can run.
+      - pgdata:/var/lib/postgresql
+    command:
+      - postgres
+      - -c
+      - max_connections=200        # above pool_size+max_overflow x workers, so
+      - -c                         # the pool binds first and Little's Law is
+      - log_min_duration_statement=500   # about the count you configured
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d craft_lab"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy
+    ports:
+      - "8475:8474"     # admin API
+      - "55443:5433"    # the pg listener the api connects through
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: ./api
+    environment:
+      # Points at toxiproxy, not at Postgres, so topics 3 and 7 need no restart
+      # to inject a fault.
+      DATABASE_URL: postgresql+asyncpg://app:app@toxiproxy:5433/craft_lab
+      POOL_SIZE: "5"
+      MAX_OVERFLOW: "10"
+      # POOL_TIMEOUT_S, STATEMENT_TIMEOUT_MS, REQUEST_DEADLINE_MS and
+      # BREAKER_LATENCY_MS default to UNSET, because unset is topic 7's ladder-A
+      # baseline and every ladder after it adds exactly one of them.
+      #
+      # They are PASSED THROUGH rather than omitted, and that is the whole point
+      # of these five lines. Topic 7's ladders B-E are run as
+      # `POOL_TIMEOUT_S=0.5 docker compose up -d --force-recreate api`, and a
+      # variable in the shell reaches the container only if it is named here.
+      # Omit them and all four ladders come back identical to the baseline --
+      # four rows of "the fix did nothing", with nothing on screen to say why.
+      # `config.py` reads "" as unset, so an empty default is a true baseline.
+      POOL_TIMEOUT_S: "${POOL_TIMEOUT_S:-}"
+      STATEMENT_TIMEOUT_MS: "${STATEMENT_TIMEOUT_MS:-}"
+      REQUEST_DEADLINE_MS: "${REQUEST_DEADLINE_MS:-}"
+      BREAKER_LATENCY_MS: "${BREAKER_LATENCY_MS:-}"
+      # These two are read with int()/float() and a "0" default, so they take a
+      # zero rather than an empty string.
+      RETRY_ATTEMPTS: "${RETRY_ATTEMPTS:-0}"
+      RETRY_BUDGET_PCT: "${RETRY_BUDGET_PCT:-0}"
+      ERROR_MODE: "${ERROR_MODE:-swallow}"
+      PAGINATION_STRATEGY: "${PAGINATION_STRATEGY:-narrow}"
+      SEED_ORDERS: "${SEED_ORDERS:-50000}"
+    ports:
+      - "8010:8000"
+    depends_on:
+      toxiproxy:
+        condition: service_started
+    # One worker on purpose. `pool_size + max_overflow` is per PROCESS, so N
+    # workers give you N pools -- which is how teams exhaust Postgres
+    # max_connections while every worker's metrics look fine. Topic 7 wants one
+    # countable ceiling.
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+
+  k6:
+    image: grafana/k6
+    volumes:
+      - ./load:/load:ro
+    environment:
+      API: http://api:8000
+      CONSUMER_GO: http://consumer-go:8080
+      CONSUMER_NODE: http://consumer-node:8081
+    network_mode: service:api
+    profiles: ["load"]
+
+  consumer-go:
+    build: ./consumer-go
+    environment:
+      API: http://api:8000
+    ports:
+      # 8090, not 8080. Every other host port in this file is deliberately
+      # offset so the stack does not collide with whatever else is running on
+      # the machine; 8080 and 8081 are the two most-contended ports on a
+      # developer laptop and were the exception. A collision here does not
+      # degrade ladder F, it stops the container from starting at all.
+      - "8090:8080"
+    profiles: ["consumers"]
+
+  consumer-node:
+    build: ./consumer-node
+    environment:
+      API: http://api:8000
+    ports:
+      - "8091:8081"
+    profiles: ["consumers"]
+
+  tools:
+    build: ./tools
+    volumes:
+      - ./api:/work/api:ro
+      - ./reports:/work/reports
+    working_dir: /work
+    profiles: ["tools"]
+
+volumes:
+  pgdata:
