@@ -1,0 +1,7 @@
+apiVersion: 1
+providers:
+  - name: layer10
+    folder: "Layer 10"
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards
