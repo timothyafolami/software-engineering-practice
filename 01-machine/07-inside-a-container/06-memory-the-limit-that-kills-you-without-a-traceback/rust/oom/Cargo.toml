@@ -1,0 +1,13 @@
+[package]
+name = "oom"
+version = "0.1.0"
+edition = "2021"
+
+# No dependencies. Part of the point is that Rust has nothing to configure
+# here: no collector to tune, no heap ceiling to set, and nothing in std
+# that reads memory.max. RSS is live data plus fragmentation, and that is
+# the whole story.
+[dependencies]
+
+[profile.release]
+debug = false
